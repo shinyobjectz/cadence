@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-verify"
+description = "Enables the start_verify command without any pre-configured scope."
+commands.allow = ["start_verify"]
+
+[[permission]]
+identifier = "deny-start-verify"
+description = "Denies the start_verify command without any pre-configured scope."
+commands.deny = ["start_verify"]

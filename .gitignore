@@ -1,0 +1,44 @@
+.env
+.DS_Store
+*.part
+
+# Build products
+target/
+build/
+dist/
+native/
+
+# Local render output
+examples/out/
+evals/out/
+
+# Fetched public eval fixtures (bin/eval --fetch)
+evals/assets/*.webm
+evals/assets/*.ogg
+evals/assets/*.jpg
+evals/assets/fonts/
+evals/assets/compass.svg
+evals/assets/helium_atom.svg
+evals/assets/nasa_worm.svg
+evals/assets/android_wave.json
+
+# Upstream LÖVE app kept for parity; the fork is vendor/ellua-love
+vendor/love12.app/
+
+# Nested clones
+skills/vendor/**/.git/
+
+# Private / oversized example media (not part of the public renderer)
+examples/assets/**/*.mp4
+examples/assets/**/*.webm
+examples/assets/**/*.ogv
+examples/assets/**/*.mp3
+examples/assets/jfk/
+examples/assets/el_demos/
+examples/assets/el_ref/
+examples/assets/ab6ix_breathe.f137.mp4.part
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

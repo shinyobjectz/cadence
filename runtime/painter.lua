@@ -1,0 +1,989 @@
+-- love host painter: draws an ellua scene graph via love.graphics.
+-- The only file (besides main.lua) that touches love.* — the painter contract
+-- keeps lib/ host-free so the rust host can implement the same interface.
+local P = {}
+
+-- BT.709 YUV -> RGB on the GPU. Cover-crop + scale ride the draw quad for free.
+local yuv_shader
+local function get_yuv_shader()
+  if not yuv_shader then
+    yuv_shader = love.graphics.newShader([[
+      uniform Image u_plane;
+      uniform Image v_plane;
+      uniform float full_range;
+      vec4 effect(vec4 color, Image y_plane, vec2 uv, vec2 sc) {
+        float y = Texel(y_plane, uv).r;
+        float u = Texel(u_plane, uv).r - 0.5;
+        float v = Texel(v_plane, uv).r - 0.5;
+        y = mix((y - 0.0625) * 1.16438, y, full_range);
+        float r = y + 1.5748 * v;
+        float g = y - 0.18732 * u - 0.46812 * v;
+        float b = y + 1.8556 * u;
+        return vec4(r, g, b, 1.0) * color;
+      }
+    ]])
+  end
+  return yuv_shader
+end
+
+-- Real drop shadows: a rounded-rect silhouette rendered once into a canvas and
+-- separably gaussian-blurred, then cached by geometry. Cheap per frame (one
+-- textured quad) and genuinely soft, unlike stacked rects.
+local blur_shader
+local shadow_cache = {}
+
+local function get_blur()
+  if not blur_shader then
+    blur_shader = love.graphics.newShader([[
+      extern vec2 dir;       // (1/w, 0) or (0, 1/h) scaled by radius
+      vec4 effect(vec4 c, Image tex, vec2 uv, vec2 sc) {
+        float w[9];
+        w[0]=0.0625; w[1]=0.0938; w[2]=0.1250; w[3]=0.1562; w[4]=0.1688;
+        w[5]=0.1562; w[6]=0.1250; w[7]=0.0938; w[8]=0.0625;
+        vec4 sum = vec4(0.0);
+        float tot = 0.0;
+        for (int i = 0; i < 9; i++) {
+          float o = float(i) - 4.0;
+          sum += Texel(tex, uv + dir * o) * w[i];
+          tot += w[i];
+        }
+        return (sum / tot) * c;
+      }
+    ]])
+  end
+  return blur_shader
+end
+
+-- returns a canvas holding a soft shadow for a w×h rounded rect
+local function shadow_canvas(w, h, rx, blur)
+  local key = ("%d|%d|%d|%d"):format(w, h, rx, blur)
+  local c = shadow_cache[key]
+  if c then return c end
+  local pad = blur * 3
+  local cw, ch = math.ceil(w + pad * 2), math.ceil(h + pad * 2)
+  local a = love.graphics.newCanvas(cw, ch)
+  local b = love.graphics.newCanvas(cw, ch)
+  local prev = love.graphics.getCanvas()
+  local pc, pv = love.graphics.getStencilTest()
+  love.graphics.push("all")
+  love.graphics.origin()
+  love.graphics.setStencilTest()
+  love.graphics.setBlendMode("alpha", "premultiplied")
+  love.graphics.setCanvas(a)
+  love.graphics.clear(0, 0, 0, 0)
+  love.graphics.setColor(0, 0, 0, 1)
+  love.graphics.rectangle("fill", pad, pad, w, h, rx, rx)
+  love.graphics.setColor(1, 1, 1, 1)
+  local sh = get_blur()
+  love.graphics.setShader(sh)
+  -- two separable passes, repeated for a wider kernel
+  for _ = 1, 3 do
+    love.graphics.setCanvas(b)
+    love.graphics.clear(0, 0, 0, 0)
+    sh:send("dir", { (blur / 4) / cw, 0 })
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(a, 0, 0)
+    love.graphics.setCanvas(a)
+    love.graphics.clear(0, 0, 0, 0)
+    sh:send("dir", { 0, (blur / 4) / ch })
+    love.graphics.draw(b, 0, 0)
+  end
+  love.graphics.setShader()
+  love.graphics.setCanvas(prev and { prev, stencil = true } or nil)
+  love.graphics.pop()
+  if pc then love.graphics.setStencilTest(pc, pv) end
+  b:release()
+  shadow_cache[key] = { canvas = a, pad = pad }
+  return shadow_cache[key]
+end
+
+P.shadow_canvas = shadow_canvas
+
+local fonts = {}
+local fontdata = {}
+local function font(size, path)
+  size = math.floor(size + 0.5)
+  local key = (path or "") .. "|" .. size
+  if not fonts[key] then
+    if path then
+      if not fontdata[path] then
+        local p = path:match("^/") and path
+          or ((os.getenv("CADENCE_CWD") or os.getenv("ELLUA_CWD") or ".") .. "/" .. path)
+        local f = assert(_ELLUA_IOOPEN(p, "rb"), "ellua: font not found: " .. path)
+        fontdata[path] = love.filesystem.newFileData(f:read("*a"), "font.ttf")
+        f:close()
+      end
+      fonts[key] = love.graphics.newFont(fontdata[path], size)
+    else
+      fonts[key] = love.graphics.newFont(size)
+    end
+  end
+  return fonts[key]
+end
+P.font = font -- resolve.layout uses the same cache for kinetic measuring
+
+-- Frame/image loading from absolute paths (love.filesystem is sandboxed to the
+-- source dir, so go through raw io + FileData). Tiny per-node cache: render order
+-- is sequential, so cache size 1 per node hits ~always.
+local img_cache = {}
+local function load_image(path)
+  local f = assert(_ELLUA_IOOPEN(path, "rb"), "ellua: cannot read " .. path)
+  local bytes = f:read("*a")
+  f:close()
+  local fd = love.filesystem.newFileData(bytes, "f.jpg")
+  return love.graphics.newImage(love.image.newImageData(fd))
+end
+
+local function node_image(node, path)
+  local c = img_cache[node]
+  if c and c.path == path then return c.img end
+  if c and c.img then c.img:release() end
+  local img = load_image(path)
+  img_cache[node] = { path = path, img = img }
+  return img
+end
+
+-- Cursor composited INTO the page surface (before any 3D warp), so it tilts
+-- with the page and defocuses with it — exactly as a baked-in recording cursor
+-- would. Position is normalized page coords; the sprite is offset by its
+-- hotspot so the tip, not the corner, sits on the point.
+local surf_cache = {}
+local function surface_image(path)
+  if not surf_cache[path] then surf_cache[path] = load_image(path) end
+  return surf_cache[path]
+end
+
+local function paint_surface_cursor(node, w, h, dx, dy)
+  if not node.cursor_file then return end
+  local op = node:get("cursor_opacity")
+  if op == nil then op = 1 end
+  if op <= 0 then return end
+  local img = surface_image(node.cursor_file)
+  local iw, ih = img:getDimensions()
+  local cw = node:get("cursor_w") or 34
+  local hx = node.initial.cursor_hot_x or (8 / 32)
+  local hy = node.initial.cursor_hot_y or (6 / 32)
+  local cu = node:get("cursor_u") or 0.5
+  local cv = node:get("cursor_v") or 0.5
+  love.graphics.setColor(1, 1, 1, op)
+  love.graphics.draw(img, dx + cu * w - hx * cw, dy + cv * h - hy * cw, 0, cw / iw, cw / iw)
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+local function setcolor(c, opacity)
+  c = c or { 1, 1, 1, 1 }
+  love.graphics.setColor(c[1], c[2], c[3], (c[4] or 1) * opacity)
+end
+
+local sdf_shader
+local function get_sdf()
+  if not sdf_shader then
+    sdf_shader = love.graphics.newShader([[
+      uniform float weight;
+      uniform float outline;
+      uniform vec4 fill;
+      uniform vec4 stroke;
+      vec4 effect(vec4 color, Image tex, vec2 uv, vec2 sc) {
+        float a = Texel(tex, uv).a;
+        float edge = 0.50 - weight * 0.12;
+        float fillA = smoothstep(edge - 0.08, edge + 0.08, a);
+        float strokeA = smoothstep(edge - 0.22 * outline, edge - 0.06, a) * (1.0 - fillA);
+        vec4 outc = fill * fillA + stroke * strokeA;
+        outc.a *= color.a;
+        return outc;
+      }
+    ]])
+  end
+  return sdf_shader
+end
+
+local function draw_cmds(g, cmds, opacity)
+  for _, cmd in ipairs(cmds) do
+    setcolor(cmd.color, opacity * (cmd.opacity or 1))
+    if cmd.kind == "rect" then
+      g.rectangle("fill", cmd.x, cmd.y, cmd.w, cmd.h, cmd.rx or 0, cmd.rx or 0)
+    elseif cmd.kind == "arc" then
+      g.arc(cmd.fill and "fill" or "line", cmd.x, cmd.y, cmd.r, cmd.a0, cmd.a1)
+    elseif cmd.kind == "polyline" then
+      local pts = cmd.pts
+      if pts and #pts >= 4 then
+        if cmd.fill and #pts >= 6 then
+          g.polygon("fill", unpack(pts))
+        else
+          g.setLineWidth(cmd.width or 2)
+          g.setLineJoin("bevel")
+          g.setLineStyle("smooth")
+          g.line(unpack(pts))
+        end
+      end
+    end
+  end
+end
+
+local function anchor_offset(node, w, h)
+  if node:get("anchor") == "center" then return -w / 2, -h / 2 end
+  return 0, 0
+end
+
+local blend_modes = {
+  alpha = true, add = true, subtract = true, multiply = true,
+  lighten = true, darken = true, screen = true, replace = true,
+}
+
+local function set_node_blend(node)
+  local blend = node.initial.blend
+  if blend then
+    assert(blend_modes[blend], "ellua: unsupported blend mode " .. tostring(blend))
+    love.graphics.setBlendMode(blend, blend == "replace" and "alphamultiply" or "premultiplied")
+  end
+end
+
+-- Draw a flat surface: rounded corners, opacity, and — when the node sets
+-- perspective = true — a 3D camera. The content is composed flat into a canvas
+-- first, so the 3D path reuses the normal draw code instead of duplicating it.
+local function draw_surface(node, w, h, opacity, ox, oy, rx, paint)
+  if not node.initial.perspective then
+    if rx > 0 then
+      love.graphics.stencil(function()
+        love.graphics.rectangle("fill", ox, oy, w, h, rx, rx)
+      end, "replace", 1, false)
+      love.graphics.setStencilTest("greater", 0)
+    end
+    setcolor({ 1, 1, 1, 1 }, opacity)
+    paint(ox, oy)
+    paint_surface_cursor(node, w, h, ox, oy)
+    if rx > 0 then love.graphics.setStencilTest() end
+    return
+  end
+  local persp = require("persp")
+  local fw, fh = math.ceil(w), math.ceil(h)
+  local flat = persp.flat_canvas(fw, fh)
+  local prevc = love.graphics.getCanvas()
+  local pcc, pvv = love.graphics.getStencilTest()
+  love.graphics.push("all")
+  love.graphics.origin()
+  love.graphics.setStencilTest()
+  love.graphics.setCanvas({ flat, stencil = true })
+  love.graphics.clear(0, 0, 0, 0)
+  if rx > 0 then
+    love.graphics.stencil(function()
+      love.graphics.rectangle("fill", 0, 0, w, h, rx, rx)
+    end, "replace", 1, false)
+    love.graphics.setStencilTest("greater", 0)
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+  paint(0, 0)
+  paint_surface_cursor(node, w, h, 0, 0)
+  love.graphics.setStencilTest()
+  love.graphics.setCanvas(prevc and { prevc, stencil = true } or nil)
+  love.graphics.pop()
+  if pcc then love.graphics.setStencilTest(pcc, pvv) end
+  local stage, sx, sy = persp.render(node, flat, w, h)
+  if stage then
+    local bm, ba = love.graphics.getBlendMode()
+    love.graphics.setBlendMode("alpha", "premultiplied")
+    setcolor({ 1, 1, 1, 1 }, opacity)
+    love.graphics.draw(stage, ox + sx, oy + sy)
+    love.graphics.setBlendMode(bm, ba)
+  end
+end
+
+-- Kick decode-ahead for every video active at t_next — called right after drawing
+-- the current frame, so workers decode while love does readback + encode.
+function P.prefetch(comp, t_next)
+  local decode = require("decode")
+  for _, node in ipairs(comp.nodes) do
+    if node.kind == "video" and node.dec then
+      local i = node.initial
+      local rel = t_next - i.from
+      if rel >= 0 and rel < i.duration then
+        decode.prefetch(node.dec, i.media_start + rel)
+      end
+    end
+  end
+end
+
+-- walk the parent chain root-first so a group's transform wraps its children.
+-- Optional `stop` (exclusive) lets an fx canvas draw descendants in local space.
+local function parent_chain(node, stop)
+  local chain, p = {}, node.initial and node.initial.parent
+  while p and p ~= stop do
+    table.insert(chain, 1, p)
+    p = p.initial and p.initial.parent
+  end
+  return chain
+end
+
+local function fx_ancestor(node)
+  local p = node.initial and node.initial.parent
+  while p do
+    if p.kind == "fx" then return p end
+    p = p.initial and p.initial.parent
+  end
+end
+
+local paint_node
+
+local function apply_fx(comp, node, t)
+  local g = love.graphics
+  local opacity = node:get("opacity")
+  local chain = parent_chain(node)
+  for _, p in ipairs(chain) do opacity = opacity * (p:get("opacity") or 1) end
+  if opacity <= 0 then return end
+  local w = math.floor(node:get("w") or 0)
+  local h = math.floor(node:get("h") or 0)
+  if w < 1 or h < 1 then return end
+  local fxmod = require("fx")
+  local a, b, c = fxmod.canvases(node, w, h)
+  local prev = g.getCanvas()
+  local pc, pv = g.getStencilTest()
+  g.push("all")
+  g.origin()
+  g.setStencilTest()
+  g.setCanvas({ a, stencil = true })
+  g.clear(0, 0, 0, 0)
+  for _, child in ipairs(comp.nodes) do
+    if fx_ancestor(child) == node then
+      paint_node(comp, child, t, node)
+    end
+  end
+  g.setCanvas(prev and { prev, stencil = true } or nil)
+  g.pop()
+  if pc then g.setStencilTest(pc, pv) end
+  local out = fxmod.apply(node, a, b, c, t, w, h)
+  g.push("all")
+  for _, p in ipairs(chain) do
+    g.translate(p:get("x") or 0, p:get("y") or 0)
+    g.rotate(p:get("rotation") or 0)
+    local ps = p:get("scale") or 1
+    g.scale(ps, ps)
+  end
+  g.translate(node:get("x") or 0, node:get("y") or 0)
+  g.rotate(node:get("rotation") or 0)
+  local s = node:get("scale") or 1
+  g.scale(s, s)
+  local ox, oy = anchor_offset(node, w, h)
+  local bm, ba = g.getBlendMode()
+  g.setBlendMode("alpha", "premultiplied")
+  setcolor({ 1, 1, 1, 1 }, opacity)
+  g.draw(out, ox, oy)
+  g.setBlendMode(bm, ba)
+  g.pop()
+end
+
+paint_node = function(comp, node, t, stop)
+  local g = love.graphics
+  if node.kind == "fx" and not stop then
+    apply_fx(comp, node, t)
+    return
+  end
+  local opacity = node:get("opacity")
+    -- inherited opacity: a group fading takes its children with it
+    local chain = parent_chain(node, stop)
+    for _, p in ipairs(chain) do opacity = opacity * (p:get("opacity") or 1) end
+    if opacity > 0 and node.kind ~= "group" and node.kind ~= "kinetic" and node.kind ~= "fx"
+      and node.kind ~= "camera" and node.kind ~= "light" and node.kind ~= "mesh" then
+      -- Blend, shader, canvas, and stencil state are node-local. Transform-only
+      -- pushes let a `screen` node leak into later text, corrupting glyph atlas
+      -- blending into solid character rectangles.
+      g.push("all")
+      for _, p in ipairs(chain) do
+        g.translate(p:get("x") or 0, p:get("y") or 0)
+        g.rotate(p:get("rotation") or 0)
+        local ps = p:get("scale") or 1
+        g.scale(ps, ps)
+      end
+      -- clip_node: stencil this node to another node's live rect (same parent
+      -- space). Used for reveal wipes and "text inverts under a sliding pill".
+      local clipn = node.initial.clip_node
+      local clipped = false
+      if clipn then
+        local cx, cy = clipn:get("x") or 0, clipn:get("y") or 0
+        local cw, ch = clipn:get("w") or 0, clipn:get("h") or 0
+        local crx = clipn:get("rx") or 0
+        if clipn.initial.anchor == "center" then cx, cy = cx - cw / 2, cy - ch / 2 end
+        -- Always stencil, even at zero area: an empty clip must reveal NOTHING.
+        -- Skipping it here would leak the whole node on the first frame of a wipe.
+        clipped = true
+        if crx > 0 then crx = math.min(crx, cw / 2, ch / 2) end
+        love.graphics.stencil(function()
+          if cw > 0 and ch > 0 then
+            love.graphics.rectangle("fill", cx, cy, cw, ch, crx, crx)
+          end
+        end, "replace", 1, false)
+        love.graphics.setStencilTest(node.initial.clip_invert and "equal" or "greater", 0)
+      end
+      g.translate(node:get("x") or 0, node:get("y") or 0)
+      g.rotate(node:get("rotation"))
+      local s = node:get("scale")
+      g.scale(s, s)
+      set_node_blend(node)
+
+      -- soft drop shadow beneath this node, drawn before its own paint
+      local shq = node.initial.shadow
+      if shq then
+        local sw = (node:get("w") or 0)
+        local sh2 = (node:get("h") or 0)
+        if sw > 0 and sh2 > 0 then
+          local sc = shadow_canvas(math.floor(sw), math.floor(sh2),
+            math.floor(node:get("rx") or 0), shq.blur or 40)
+          local ox, oy = anchor_offset(node, sw, sh2)
+          local bm, ba = love.graphics.getBlendMode()
+          love.graphics.setBlendMode("alpha", "premultiplied")
+          love.graphics.setColor(0, 0, 0, (shq.alpha or 0.3) * opacity)
+          love.graphics.draw(sc.canvas, ox - sc.pad, oy - sc.pad + (shq.dy or 10))
+          love.graphics.setColor(1, 1, 1, 1)
+          love.graphics.setBlendMode(bm, ba)
+        end
+      end
+      if node.kind == "flex" then
+        if node:get("color") then
+          setcolor(node:get("color"), opacity)
+          g.rectangle("fill", 0, 0, node:get("w"), node:get("h"), node:get("rx") or 0)
+        end
+      elseif node.kind == "rect" or node.kind == "surface" then
+        local w, h = node:get("w"), node:get("h")
+        local ox, oy = anchor_offset(node, w, h)
+        local rx = node:get("rx") or 0
+        if node.initial.perspective then
+          local col = node:get("color")
+          draw_surface(node, w, h, opacity, ox, oy, rx, function(dx, dy)
+            setcolor(col, 1)
+            g.rectangle("fill", dx, dy, w, h)
+          end)
+        else
+          setcolor(node:get("color"), opacity)
+          g.rectangle("fill", ox, oy, w, h, rx, rx)
+        end
+      elseif node.kind == "circle" then
+        setcolor(node:get("color"), opacity)
+        g.circle("fill", 0, 0, node:get("r"))
+      elseif node.kind == "text" then
+        local f = font(node:get("size") or 32, node:get("font"))
+        g.setFont(f)
+        local text = node:get("text") or node.initial.text or ""
+        local wrap = node.initial.wrap
+        local reveal = node:get("reveal")
+        local tagged = text:find("{", 1, true)
+        if wrap or tagged or reveal ~= nil then
+          local rich = require("richtext")
+          local runs = rich.parse(text, node:get("color"))
+          if reveal ~= nil then runs = rich.reveal(runs, reveal) end
+          local lines = rich.wrap(f, runs, wrap)
+          local tw, th = rich.measure(f, lines, node.initial.leading)
+          local ox, oy = anchor_offset(node, tw, th)
+          rich.draw(g, f, lines, node.initial.leading, opacity, ox, oy)
+        else
+          local ox, oy = anchor_offset(node, f:getWidth(text), f:getHeight())
+          local outline = node:get("outline") or node.initial.outline
+          if outline and outline > 0 then
+            local tw, th = f:getWidth(text), f:getHeight()
+            local key = text .. "|" .. tostring(node:get("size"))
+            if node.sdf_key ~= key then
+              local pad = 12
+              local canvas = love.graphics.newCanvas(math.ceil(tw + pad * 2), math.ceil(th + pad * 2))
+              local prev = love.graphics.getCanvas()
+              love.graphics.push("all")
+              love.graphics.origin()
+              love.graphics.setCanvas(canvas)
+              love.graphics.clear(0, 0, 0, 0)
+              love.graphics.setFont(f)
+              love.graphics.setColor(1, 1, 1, 1)
+              love.graphics.print(text, pad, pad)
+              love.graphics.setCanvas(prev)
+              love.graphics.pop()
+              node.sdf_canvas, node.sdf_key, node.sdf_pad = canvas, key, pad
+            end
+            local sh = get_sdf()
+            local fill = node:get("color") or { 1, 1, 1, 1 }
+            local stroke = node.initial.outline_color or { 0, 0, 0, 1 }
+            sh:send("weight", node:get("weight") or 0)
+            sh:send("outline", outline)
+            sh:send("fill", { fill[1], fill[2], fill[3], (fill[4] or 1) * opacity })
+            sh:send("stroke", { stroke[1], stroke[2], stroke[3], (stroke[4] or 1) * opacity })
+            g.setShader(sh)
+            g.setColor(1, 1, 1, 1)
+            g.draw(node.sdf_canvas, ox - node.sdf_pad, oy - node.sdf_pad)
+            g.setShader()
+          else
+            setcolor(node:get("color"), opacity)
+            g.print(text, ox, oy)
+          end
+        end
+      elseif node.kind == "video" then
+        local i = node.initial
+        local rel = t - i.from
+        if rel >= 0 and rel < i.duration then
+          local ox, oy = anchor_offset(node, i.w, i.h)
+          local rx = node:get("rx") or 0
+          -- Each decode path only supplies a `paint(dx, dy)`; draw_surface owns
+          -- rounding, opacity and the optional 3D camera. Perspective therefore
+          -- works on every source (yuv, rgba, extracted frames) for free.
+          local paint
+          if node.dec and node.dec.mode == "yuv" then
+            local d = node.dec
+            if not node.ydata then
+              node.ydata = love.image.newImageData(d.w, d.h, "r8")
+              node.udata = love.image.newImageData(d.w / 2, d.h / 2, "r8")
+              node.vdata = love.image.newImageData(d.w / 2, d.h / 2, "r8")
+              node.yimg = love.graphics.newImage(node.ydata)
+              node.uimg = love.graphics.newImage(node.udata)
+              node.vimg = love.graphics.newImage(node.vdata)
+              node.yimg:setFilter("linear", "linear")
+              node.uimg:setFilter("linear", "linear")
+              node.vimg:setFilter("linear", "linear")
+              -- cover-crop region in source space; GPU scales it to node w×h
+              local sc = math.max(i.w / d.w, i.h / d.h)
+              local cw, ch = i.w / sc, i.h / sc
+              node.quad = love.graphics.newQuad((d.w - cw) / 2, (d.h - ch) / 2, cw, ch, d.w, d.h)
+              node.qscale = { i.w / cw, i.h / ch }
+            end
+            local decode = require("decode")
+            decode.frame_yuv(d, i.media_start + rel,
+              node.ydata:getFFIPointer(), node.ydata:getSize(),
+              node.udata:getFFIPointer(), node.udata:getSize(),
+              node.vdata:getFFIPointer(), node.vdata:getSize())
+            node.yimg:replacePixels(node.ydata)
+            node.uimg:replacePixels(node.udata)
+            node.vimg:replacePixels(node.vdata)
+            paint = function(dx, dy)
+              local sh = get_yuv_shader()
+              g.setShader(sh)
+              sh:send("u_plane", node.uimg)
+              sh:send("v_plane", node.vimg)
+              sh:send("full_range", d.full_range and 1.0 or 0.0)
+              g.draw(node.yimg, node.quad, dx, dy, 0, node.qscale[1], node.qscale[2])
+              g.setShader()
+            end
+          elseif node.dec then
+            -- rgba fallback (non-yuv420 sources, e.g. lossless 4:4:4 captures)
+            if not node.imgdata then
+              node.imgdata = love.image.newImageData(i.w, i.h, "rgba8")
+              node.img = love.graphics.newImage(node.imgdata)
+            end
+            local decode = require("decode")
+            decode.frame_rgba(node.dec, i.media_start + rel,
+              node.imgdata:getFFIPointer(), node.imgdata:getSize())
+            node.img:replacePixels(node.imgdata)
+            paint = function(dx, dy) g.draw(node.img, dx, dy) end
+          elseif node.frame_count and node.frame_count > 0 then
+            local idx = math.min(math.floor(rel * comp.render_fps) + 1, node.frame_count)
+            local img = node_image(node, ("%s/%05d.jpg"):format(node.frames_dir, idx))
+            paint = function(dx, dy) g.draw(img, dx, dy) end
+          end
+          if paint then draw_surface(node, i.w, i.h, opacity, ox, oy, rx, paint) end
+        end
+      elseif node.kind == "lottie" then
+        local i = node.initial
+        local rel = t - i.from
+        if rel >= 0 and rel < i.duration then
+          local lottie = require("lottie")
+          if lottie.available then
+            if not node.lot then
+              node.lotdata = love.image.newImageData(i.w, i.h, "rgba8")
+              node.lot = lottie.open(node.file, i.w, i.h, node.lotdata:getFFIPointer())
+              node.lotimg = love.graphics.newImage(node.lotdata)
+            end
+            node.lot:render(i.media_start + rel * (i.speed or 1), i.loop)
+            node.lotimg:replacePixels(node.lotdata)
+            setcolor({ 1, 1, 1, 1 }, opacity)
+            love.graphics.setBlendMode("alpha", "premultiplied")
+            local ox, oy = anchor_offset(node, i.w, i.h)
+            g.draw(node.lotimg, ox, oy)
+            love.graphics.setBlendMode("alpha", "alphamultiply")
+          end
+        end
+      elseif node.kind == "vector" then
+        local vector = require("vector")
+        if vector.available then
+          local i = node.initial
+          if not node.vecdata then
+            node.vecdata = love.image.newImageData(i.w, i.h, "rgba8")
+            node.vecimg = love.graphics.newImage(node.vecdata)
+            node.vecbuilder = vector.new_builder()
+          end
+          node.vecbuilder:reset()
+          i.draw(node.vecbuilder, t, node)
+          vector.render(node.vecbuilder, i.w, i.h,
+            node.vecdata:getFFIPointer(), node.vecdata:getSize())
+          require("effects").apply(node, node.vecdata, i.w, i.h)
+          node.vecimg:replacePixels(node.vecdata)
+          setcolor({ 1, 1, 1, 1 }, opacity)
+          love.graphics.setBlendMode("alpha", "premultiplied")
+          local ox, oy = anchor_offset(node, i.w, i.h)
+          g.draw(node.vecimg, ox, oy)
+          love.graphics.setBlendMode("alpha", "alphamultiply")
+        end
+      elseif node.kind == "world" then
+        local scene3d = require("scene3d")
+        if scene3d.available then
+          local i = node.initial
+          local w, h = math.floor(node:get("w") or i.w or 0), math.floor(node:get("h") or i.h or 0)
+          if w >= 1 and h >= 1 then
+            if not node.worlddata then
+              node.worlddata = love.image.newImageData(w, h, "rgba8")
+              node.worldimg = love.graphics.newImage(node.worlddata)
+              node.worldbuilder = scene3d.new_builder()
+            end
+            local b = node.worldbuilder
+            b:reset()
+            b:clear(0, 0, 0, 0)
+            b:camera(
+              node:get("cam_x") or 0, node:get("cam_y") or 0.35, node:get("cam_z") or 3.2,
+              node:get("look_x") or 0, node:get("look_y") or 0, node:get("look_z") or 0,
+              0, 1, 0,
+              node:get("fov") or 0.7, i.near or 0.05, i.far or 80,
+              node:get("yaw") or 0, node:get("pitch") or 0, node:get("roll") or 0)
+            b:ambient(0.16, 0.17, 0.20)
+            local lit = false
+            for _, child in ipairs(comp.nodes) do
+              if child.kind == "light" and child.initial.parent == node then
+                local d = child.initial.dir or { 0.35, -1, 0.25 }
+                local c = child:get("color") or child.initial.color or { 1, 1, 1, 1 }
+                b:light(d[1], d[2], d[3], c[1], c[2], c[3], child.initial.intensity or 1)
+                lit = true
+              end
+            end
+            if not lit then b:light(0.4, -1, 0.25, 1, 1, 1, 1.05) end
+            for _, child in ipairs(comp.nodes) do
+              if child.kind == "mesh" and child.initial.parent == node then
+                local c = child:get("color") or { 0.85, 0.88, 0.92, 1 }
+                local sc = child:get("scale") or 1
+                local a = (c[4] or 1) * (child:get("opacity") or 1)
+                local prim = child.initial.primitive
+                if child.mesh_id then
+                  b:mesh(child.mesh_id,
+                    child:get("x") or 0, child:get("y") or 0, child:get("z") or 0,
+                    child:get("yaw") or 0, child:get("pitch") or 0, child:get("roll") or 0,
+                    sc, sc, sc, c[1], c[2], c[3], a)
+                elseif prim == "sphere" then
+                  b:sphere(
+                    child:get("x") or 0, child:get("y") or 0, child:get("z") or 0,
+                    child:get("yaw") or 0, child:get("pitch") or 0, child:get("roll") or 0,
+                    sc, sc, sc, c[1], c[2], c[3], a)
+                else
+                  b:cube(
+                    child:get("x") or 0, child:get("y") or 0, child:get("z") or 0,
+                    child:get("yaw") or 0, child:get("pitch") or 0, child:get("roll") or 0,
+                    sc, sc, sc, c[1], c[2], c[3], a)
+                end
+              end
+            end
+            scene3d.render(b, w, h, node.worlddata:getFFIPointer(), node.worlddata:getSize())
+            node.worldimg:replacePixels(node.worlddata)
+            setcolor({ 1, 1, 1, 1 }, opacity)
+            love.graphics.setBlendMode("alpha", "premultiplied")
+            local ox, oy = anchor_offset(node, w, h)
+            g.draw(node.worldimg, ox, oy)
+            love.graphics.setBlendMode("alpha", "alphamultiply")
+          end
+        end
+      elseif node.kind == "html" then
+        local html = require("html")
+        if html.available then
+          local i = node.initial
+          if not node.htmldata then
+            node.htmldata = love.image.newImageData(i.w, i.h, "rgba8")
+            node.htmlimg = love.graphics.newImage(node.htmldata)
+            node.html_key = nil
+          end
+          local progress = node:get("progress") or 0
+          local progress_key = string.format("%.2f", progress)
+          local key = string.format("%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f",
+            progress_key, node:get("effect_blur"), node:get("effect_brightness"),
+            node:get("effect_contrast"), node:get("effect_saturate"),
+            node:get("effect_grayscale"), node:get("effect_sepia"),
+            node:get("effect_invert"), node:get("effect_opacity"), node:get("effect_hue_rotate"))
+          if node.html_key ~= key then
+            local markup = i.html:gsub("{{progress_int}}", tostring(math.floor(progress + 0.5)))
+              :gsub("{{progress}}", progress_key)
+            html.render(markup, i.w, i.h, 1.0,
+              node.htmldata:getFFIPointer(), node.htmldata:getSize())
+            require("effects").apply(node, node.htmldata, i.w, i.h)
+            node.htmlimg:replacePixels(node.htmldata)
+            node.html_key = key
+          end
+          setcolor({ 1, 1, 1, 1 }, opacity)
+          love.graphics.setBlendMode("alpha", "premultiplied")
+          local ox, oy = anchor_offset(node, i.w, i.h)
+          g.draw(node.htmlimg, ox, oy)
+          love.graphics.setBlendMode("alpha", "alphamultiply")
+        end
+      elseif node.kind == "image" or node.kind == "svg" or node.kind == "page" then
+        local img = node_image(node, node.file)
+        local iw, ih = img:getDimensions()
+        local w, h = node:get("w"), node:get("h")
+        local ox, oy = anchor_offset(node, w, h)
+        local irx = node:get("rx") or 0
+        if node.initial.perspective then
+          draw_surface(node, w, h, opacity, ox, oy, irx,
+            function(dx, dy) g.draw(img, dx, dy, 0, w / iw, h / ih) end)
+        else
+        if irx > 0 and not clipped then
+          love.graphics.stencil(function()
+            love.graphics.rectangle("fill", ox, oy, w, h, irx, irx)
+          end, "replace", 1, false)
+          love.graphics.setStencilTest("greater", 0)
+        end
+        setcolor({ 1, 1, 1, 1 }, opacity)
+        g.draw(img, ox, oy, 0, w / iw, h / ih)
+        if irx > 0 and not clipped then love.graphics.setStencilTest() end
+        end
+      elseif node.kind == "draw" then
+        setcolor({ 1, 1, 1, 1 }, opacity)
+        node.initial.fn(t, g)
+      elseif node.kind == "spritesheet" then
+        local img = node_image(node, node.file)
+        local iw, ih = img:getDimensions()
+        local sheet = node.sheet or {}
+        local frames = sheet.frames
+        if not frames then
+          local cols = sheet.cols or node.initial.cols or 1
+          local rows = sheet.rows or node.initial.rows or 1
+          local fw = node.initial.frame_w or (iw / cols)
+          local fh = node.initial.frame_h or (ih / rows)
+          frames = {}
+          for row = 0, rows - 1 do
+            for col = 0, cols - 1 do
+              frames[#frames + 1] = { x = col * fw, y = row * fh, w = fw, h = fh }
+            end
+          end
+          node.sheet = { frames = frames }
+        end
+        if not node.quads then
+          node.quads = {}
+          for i, fr in ipairs(frames) do
+            node.quads[i] = love.graphics.newQuad(fr.x, fr.y, fr.w, fr.h, iw, ih)
+          end
+        end
+        local i = node.initial
+        local rel = math.max(0, t - (i.from or 0))
+        local idx
+        if i.fps then
+          idx = math.floor(rel * i.fps)
+          if i.loop == false then
+            idx = math.min(idx, #frames - 1)
+          else
+            idx = idx % #frames
+          end
+          idx = idx + 1
+        else
+          local acc, chosen = 0, #frames
+          for fi, fr in ipairs(frames) do
+            acc = acc + (fr.duration or (1 / 12))
+            if rel < acc then chosen = fi break end
+          end
+          if i.loop == false then
+            idx = math.min(chosen, #frames)
+          else
+            local total = acc
+            if total > 0 and rel >= total then
+              local r = rel % total
+              acc, chosen = 0, #frames
+              for fi, fr in ipairs(frames) do
+                acc = acc + (fr.duration or (1 / 12))
+                if r < acc then chosen = fi break end
+              end
+            end
+            idx = chosen
+          end
+        end
+        local fr = frames[idx]
+        local dw = node:get("w") or fr.w
+        local dh = node:get("h") or fr.h
+        local ox, oy = anchor_offset(node, dw, dh)
+        setcolor({ 1, 1, 1, 1 }, opacity)
+        g.draw(img, node.quads[idx], ox, oy, 0, dw / fr.w, dh / fr.h)
+      elseif node.kind == "particles" then
+        local i = node.initial
+        local n = i.n
+        local seed = i.seed or 1
+        local life = i.life or 1.2
+        local emit = i.emit or 0
+        local window = i.emit_window or 0.2
+        local spread = i.spread or math.pi
+        local heading = i.heading or -math.pi / 2
+        local speed0 = i.speed or 240
+        local grav = i.gravity or 520
+        local rad = i.r or 3.5
+        local col = node:get("color") or { 1, 1, 1, 1 }
+        local function phash(k)
+          local s = math.sin(seed * 12.9898 + k * 78.233) * 43758.5453
+          return s - math.floor(s)
+        end
+        for pi = 1, n do
+          local u1, u2, u3 = phash(pi), phash(pi + 97), phash(pi + 193)
+          local birth = emit + u1 * window
+          local age = t - birth
+          if age >= 0 and age < life then
+            local ang = heading + (u2 - 0.5) * spread
+            local spd = speed0 * (0.55 + 0.9 * u3)
+            local fade = 1 - age / life
+            local px = math.cos(ang) * spd * age
+            local py = math.sin(ang) * spd * age + 0.5 * grav * age * age
+            setcolor(col, opacity * fade)
+            g.circle("fill", px, py, rad * (0.45 + 0.55 * fade))
+          end
+        end
+      elseif node.kind == "chart" then
+        local spec = {
+          type = node.initial.type, data = node.initial.data, data1 = node.initial.data1,
+          w = node:get("w"), h = node:get("h"),
+          stroke = node.initial.stroke, seed = node.initial.seed,
+          roughness = node.initial.roughness, bowing = node.initial.bowing,
+          color = node:get("color") or node.initial.color,
+          colors = node.initial.colors, hue = node.initial.hue, sat = node.initial.sat,
+          mix = node:get("mix") or 0, width = node.initial.width,
+          inner = node.initial.inner, start = node.initial.start,
+          track = node.initial.track,
+        }
+        draw_cmds(g, require("ellua.chart").commands(spec, node:get("reveal") or 1), opacity)
+      elseif node.kind == "ornament" then
+        local spec = {
+          w = node:get("w"), h = node:get("h"), r = node.initial.r,
+          n = node.initial.n, inner = node.initial.inner,
+          rx = node.initial.rx, ry = node.initial.ry,
+          x0 = node.initial.x0, y0 = node.initial.y0,
+          x1 = node.initial.x1, y1 = node.initial.y1, bow = node.initial.bow,
+          stroke = node.initial.stroke, seed = node.initial.seed,
+          roughness = node.initial.roughness,
+        }
+        local col = node:get("color") or { 1, 1, 1, 1 }
+        g.setLineWidth(node.initial.width or 2.5)
+        g.setLineJoin("bevel")
+        setcolor(col, opacity)
+        for _, pts in ipairs(require("ellua.ornament").polylines(
+          node.initial.kind, spec, node:get("reveal") or 1)) do
+          if #pts >= 4 then g.line(unpack(pts)) end
+        end
+      elseif node.kind == "spine" then
+        local skel = node.initial.skeleton
+        if skel then
+          local world = require("ellua.spine").pose(skel, node.initial.animation, t)
+          local col = node:get("color") or { 0.95, 0.72, 0.28, 1 }
+          setcolor(col, opacity)
+          g.setLineWidth(8)
+          g.setLineJoin("bevel")
+          for _, b in ipairs(world) do
+            if b.length and b.length > 2 then
+              g.line(b.x, b.y, b.x2, b.y2)
+              g.circle("fill", b.x, b.y, 6)
+            else
+              g.circle("fill", b.x, b.y, 7)
+            end
+          end
+        end
+      elseif node.kind == "rive" then
+        -- runtime optional; skip when the rive-rs dylib is not bundled
+        local rive = require("rive")
+        if rive.available then
+          error("ellua rive: open/render path not wired")
+        end
+      elseif node.kind == "displace" then
+        local w, h = node:get("w"), node:get("h")
+        local img
+        if node.file then
+          img = node_image(node, node.file)
+        else
+          if not node.disp_text then
+            local f = font(node.initial.size or 72, node.initial.font)
+            local canvas = love.graphics.newCanvas(w, h)
+            local prev = love.graphics.getCanvas()
+            love.graphics.push("all")
+            love.graphics.origin()
+            love.graphics.setCanvas(canvas)
+            love.graphics.clear(0, 0, 0, 0)
+            love.graphics.setFont(f)
+            local c = node:get("color") or { 1, 1, 1, 1 }
+            love.graphics.setColor(c[1], c[2], c[3], 1)
+            local tw = f:getWidth(node.initial.text or "")
+            love.graphics.print(node.initial.text or "", (w - tw) / 2, (h - f:getHeight()) / 2)
+            love.graphics.setCanvas(prev)
+            love.graphics.pop()
+            node.disp_text = canvas
+          end
+          img = node.disp_text
+        end
+        local iw, ih = img:getDimensions()
+        local cols = node.initial.cols or 24
+        local rows = node.initial.rows or 16
+        if not node.mesh then
+          local verts = {}
+          for row = 0, rows - 1 do
+            for col = 0, cols - 1 do
+              local x0, y0 = col / cols * w, row / rows * h
+              local x1, y1 = (col + 1) / cols * w, (row + 1) / rows * h
+              local u0, v0 = col / cols, row / rows
+              local u1, v1 = (col + 1) / cols, (row + 1) / rows
+              verts[#verts + 1] = { x0, y0, u0, v0, 1, 1, 1, 1 }
+              verts[#verts + 1] = { x1, y0, u1, v0, 1, 1, 1, 1 }
+              verts[#verts + 1] = { x1, y1, u1, v1, 1, 1, 1, 1 }
+              verts[#verts + 1] = { x0, y0, u0, v0, 1, 1, 1, 1 }
+              verts[#verts + 1] = { x1, y1, u1, v1, 1, 1, 1, 1 }
+              verts[#verts + 1] = { x0, y1, u0, v1, 1, 1, 1, 1 }
+            end
+          end
+          node.mesh = love.graphics.newMesh(verts, "triangles", "static")
+        end
+        node.mesh:setTexture(img)
+        if not node.disp_sh then
+          node.disp_sh = love.graphics.newShader([[
+            uniform float u_time;
+            uniform float u_amp;
+            uniform float u_freq;
+            vec4 position(mat4 transform_projection, vec4 vertex_position) {
+              vec4 p = vertex_position;
+              p.y += sin((p.x * 0.031 + u_time * 2.4) * u_freq) * u_amp;
+              p.x += cos((p.y * 0.027 + u_time * 1.7) * u_freq) * u_amp * 0.35;
+              return transform_projection * p;
+            }
+            vec4 effect(vec4 color, Image tex, vec2 uv, vec2 sc) {
+              return Texel(tex, uv) * color;
+            }
+          ]])
+        end
+        local sh = node.disp_sh
+        sh:send("u_time", t)
+        sh:send("u_amp", node:get("amp") or 14)
+        sh:send("u_freq", node:get("freq") or 1)
+        local ox, oy = anchor_offset(node, w, h)
+        setcolor({ 1, 1, 1, 1 }, opacity)
+        g.setShader(sh)
+        g.draw(node.mesh, ox, oy)
+        g.setShader()
+      end
+
+      if clipped then love.graphics.setStencilTest() end
+      g.pop()
+    end
+end
+
+local SKIP_DRAW = { camera = true, light = true, mesh = true }
+
+function P.draw_scene(comp, t)
+  local g = love.graphics
+  g.clear(comp.background[1], comp.background[2], comp.background[3], 1)
+  local order = {}
+  for i, node in ipairs(comp.nodes) do
+    order[i] = { i = i, node = node }
+  end
+  -- Far perspective planes (smaller dolly) draw first so closer cards occlude.
+  -- Non-perspective nodes keep declaration order against everything else.
+  table.sort(order, function(a, b)
+    local pa, pb = a.node.initial.perspective, b.node.initial.perspective
+    if pa and pb then
+      local da, db = a.node:get("dolly") or 1, b.node:get("dolly") or 1
+      if da ~= db then return da < db end
+    end
+    return a.i < b.i
+  end)
+  for _, e in ipairs(order) do
+    local node = e.node
+    if not SKIP_DRAW[node.kind] and not fx_ancestor(node) then
+      paint_node(comp, node, t)
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+return P

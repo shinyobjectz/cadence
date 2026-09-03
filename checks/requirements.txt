@@ -1,0 +1,15 @@
+# Tier-3 perceptual probe deps (Apple Silicon / MPS friendly, default PyPI wheels)
+torch>=2.4
+torchvision>=0.19
+numpy
+pillow
+# MobileCLIP2 image-text model (needs recent open_clip + timm for FastViT towers)
+open_clip_torch>=2.32
+timm>=1.0.11
+# X-CLIP (video), CLAP (audio), SigLIP2 (fallback image-text).
+# Pinned: known-good processor APIs (videos=/audios= kwargs) + SigLIP2 support (>=4.49).
+transformers==4.51.3
+soundfile
+sentencepiece
+protobuf
+huggingface_hub

@@ -1,0 +1,3 @@
+# Override ellua/.cargo/config.toml so this crate keeps its own target/.
+[build]
+target-dir = "target"

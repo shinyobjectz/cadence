@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-editor-doc"
+description = "Enables the read_editor_doc command without any pre-configured scope."
+commands.allow = ["read_editor_doc"]
+
+[[permission]]
+identifier = "deny-read-editor-doc"
+description = "Denies the read_editor_doc command without any pre-configured scope."
+commands.deny = ["read_editor_doc"]

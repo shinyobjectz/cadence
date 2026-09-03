@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-ellua-eval"
+description = "Enables the read_ellua_eval command without any pre-configured scope."
+commands.allow = ["read_ellua_eval"]
+
+[[permission]]
+identifier = "deny-read-ellua-eval"
+description = "Denies the read_ellua_eval command without any pre-configured scope."
+commands.deny = ["read_ellua_eval"]

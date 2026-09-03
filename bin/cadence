@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Cadence launcher.
+# Distribution releases use the Rust `cadence` binary in `dist/<target>/bin`,
+# which resolves bundled engine and ffmpeg. This wrapper remains for local development.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+LOVE_BIN="${LOVE_BIN:-}"
+if [[ -z "$LOVE_BIN" ]]; then
+  # Headless fork first, then vendored upstream LÖVE for parity work.
+  for c in \
+    "$ROOT/build/ellua-love-macos-mega/love/ellua-love" \
+    "$ROOT/vendor/love12.app/Contents/MacOS/love" \
+    love \
+    /Applications/love.app/Contents/MacOS/love; do
+    if command -v "$c" >/dev/null 2>&1; then LOVE_BIN="$c"; break; fi
+  done
+fi
+if [[ -z "$LOVE_BIN" ]]; then
+  echo "cadence: love not found (install LÖVE or set LOVE_BIN)" >&2
+  exit 1
+fi
+
+cmd="${1:-}"
+case "$cmd" in
+  render|hash|lint|check)
+    shift
+    # The fork creates a hidden GPU context for offline work.
+    SDL_MAC_BACKGROUND_APP=1 CADENCE_HEADLESS=1 ELLUA_HEADLESS=1 CADENCE_CWD="$PWD" ELLUA_CWD="$PWD" exec "$LOVE_BIN" "$ROOT/runtime" "--$cmd" "$@"
+    ;;
+  preview)
+    shift
+    CADENCE_CWD="$PWD" ELLUA_CWD="$PWD" exec "$LOVE_BIN" "$ROOT/runtime" "--preview" "$@"
+    ;;
+  doctor|verify|feedback|query|probe)
+    exec "$ROOT/bin/cadence-agent" "$cmd" "${@:2}"
+    ;;
+  setup|models|tts|align|features)
+    exec "$ROOT/bin/cadence-audio" "$@"
+    ;;
+  agent)
+    shift
+    exec "$ROOT/bin/cadence-agent" "$@"
+    ;;
+  *)
+    echo "usage: cadence <render|preview|hash|lint|check|verify|doctor|feedback|setup|models|tts|align|features|agent> [args]" >&2
+    echo "       cadence agent verify comps/foo.lua --json   # agent pipeline" >&2
+    exit 1
+    ;;
+esac

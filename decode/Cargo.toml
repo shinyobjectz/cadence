@@ -1,0 +1,11 @@
+[package]
+name = "ellua-decode"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ellua_decode"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ffmpeg-the-third = "5"

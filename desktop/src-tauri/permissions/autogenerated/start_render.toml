@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-render"
+description = "Enables the start_render command without any pre-configured scope."
+commands.allow = ["start_render"]
+
+[[permission]]
+identifier = "deny-start-render"
+description = "Denies the start_render command without any pre-configured scope."
+commands.deny = ["start_render"]

@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["cli", "decode", "html", "layout", "vector", "effects", "embed", "scene3d"]
+exclude = ["spikes/blitz_spike", "spikes/vello_spike", "desktop/src-tauri"]
+default-members = ["cli", "decode", "html", "layout", "vector", "effects", "scene3d"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

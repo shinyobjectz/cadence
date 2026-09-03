@@ -1,0 +1,11 @@
+[package]
+name = "ellua-vector"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ellua_vector"
+crate-type = ["cdylib"]
+
+[dependencies]
+vello_cpu = "0.1"

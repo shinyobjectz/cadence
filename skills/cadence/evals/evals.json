@@ -1,0 +1,23 @@
+{
+  "skill_name": "ellua",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "make me a quick 4 second 1080x1920 vertical intro card with ellua — dark background, a big title that says LAUNCH DAY popping in with some bounce, an accent underline bar that draws itself in, then everything fades out at the end. render it and make sure it actually looks right",
+      "expected_output": "A comp .lua file using e.comp + s:text/s:rect + s:script with backOut-style entrance, no duration overrun, anchor=center on the title; rendered mp4 verified via ffprobe frame count and extracted frames actually inspected.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "i have examples/assets/ocean.mp4 and examples/assets/city.mp4 in the ellua repo. cut them into an 8s vertical short: ocean first 4s starting 2s into the clip, hard cut to city for 4s, with a caption over each half. use ellua",
+      "expected_output": "Comp with two s:video nodes (from/duration/media_start set correctly, sources probed so media_start+duration fits), scrim rect for legibility declared before text, captions choreographed without same-prop overlaps; rendered and frame-verified.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "add a 10 second narrated version of my ellua promo — generate the voiceover with elevenlabs (voice: something warm, script: 'ellua renders video from pure lua, no browser required') and get it into the final mp4 with the title timed roughly to the words",
+      "expected_output": "Recognizes ellua has no audio phase: generates VO via vendored text-to-speech skill, ffprobes VO duration to set comp.duration, optionally Scribe word timestamps for text timing, renders silent video, muxes with ffmpeg -c:v copy, verifies audio stream present.",
+      "files": []
+    }
+  ]
+}

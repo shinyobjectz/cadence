@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Public renderer eval: fetch Wikimedia/public media, render cases, write eval.html.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$ROOT/bin/run-eval.py" "$@"

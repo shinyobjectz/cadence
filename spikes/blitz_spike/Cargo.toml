@@ -1,0 +1,16 @@
+[package]
+name = "blitz-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blitz-dom = "0.3.0-beta.1"
+blitz-html = "0.3.0-beta.1"
+blitz-paint = "0.3.0-beta.1"
+blitz-traits = "0.3.0-beta.1"
+anyrender = "0.11"
+anyrender_vello_cpu = "0.14"
+peniko = "0.5"
+
+[profile.release]
+lto = false

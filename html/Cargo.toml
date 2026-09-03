@@ -1,0 +1,27 @@
+[package]
+name = "ellua-html"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ellua_html"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ellua-html-shot"
+path = "src/bin/ellua-html-shot.rs"
+
+[dependencies]
+blitz-dom = "0.3.0-beta.1"
+blitz-html = "0.3.0-beta.1"
+blitz-paint = "0.3.0-beta.1"
+blitz-traits = "0.3.0-beta.1"
+anyrender = "0.11"
+anyrender_vello_cpu = "0.14"
+data-url = "0.3"
+kuchikiki = "0.8"
+png = "0.17"
+rquickjs = "0.9"
+ureq = "2.12"
+url = "2"
+wuff = "0.2"

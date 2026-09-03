@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# cadence-capture <url> <outdir> — pull real brand assets from a website:
+#   page.png        viewport screenshot (Blitz, no Chrome)
+#   dom.html        fetched source HTML (not a post-JS DOM dump)
+#   styles/*.css    downloaded stylesheets
+#   fonts/*.ttf     @font-face woff2 fonts, decompressed to TTF (LÖVE-loadable)
+#   logos/*         favicon, og:image, <img>/<svg> sources matching "logo"
+#   brand.json      colors (CSS custom props + frequency-ranked hexes), font names
+#
+# Page paint is himg-shaped: HTML/URL → PNG on the same Blitz stack as s:page.
+# Classic <script> bakes once (tiny document), then paint. Not a browser.
+set -euo pipefail
+
+URL="${1:?usage: cadence-capture <url> <outdir>}"
+OUT="${2:?usage: cadence-capture <url> <outdir>}"
+mkdir -p "$OUT/styles" "$OUT/fonts" "$OUT/logos"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SHOT="${CADENCE_HTML_SHOT:-${ELLUA_HTML_SHOT:-}}"
+if [ -z "$SHOT" ]; then
+  for cand in "$ROOT/native/release/ellua-html-shot" "$ROOT/target/release/ellua-html-shot"; do
+    [ -x "$cand" ] && SHOT="$cand" && break
+  done
+fi
+if [ -z "$SHOT" ] || [ ! -x "$SHOT" ]; then
+  echo "cadence-capture: html-shot binary not found (run bin/build-native)" >&2
+  exit 1
+fi
+
+UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+ORIGIN="$(echo "$URL" | grep -oE '^https?://[^/]+')"
+
+echo "[capture] html"
+curl -fsSL -A "$UA" -o "$OUT/dom.html" "$URL"
+
+echo "[capture] page.png (Blitz)"
+"$SHOT" --html "$OUT/dom.html" --base "$URL" -w 1440 --height 3000 -o "$OUT/page.png"
+
+# Styles/fonts/logos/brand are best-effort extracts from source HTML.
+set +e
+
+abs_url() { # resolve relative urls against origin/base
+  local u="$1"
+  case "$u" in
+    http*) echo "$u" ;;
+    //*) echo "https:$u" ;;
+    /*) echo "$ORIGIN$u" ;;
+    *) echo "$ORIGIN/$u" ;;
+  esac
+}
+
+echo "[capture] stylesheets"
+grep -oE '<link[^>]*rel="?stylesheet"?[^>]*>' "$OUT/dom.html" |
+  grep -oE 'href="[^"]+"' | sed 's/href="//;s/"$//' | sort -u | head -12 |
+  while read -r href; do
+    u="$(abs_url "$href")"
+    f="$OUT/styles/$(echo "$u" | shasum | cut -c1-10).css"
+    curl -fsSL -A "$UA" -o "$f" "$u" 2>/dev/null && echo "  $u"
+  done
+# inline <style> blocks too
+perl -0777 -ne 'while (/<style[^>]*>(.*?)<\/style>/gs) { print "$1\n" }' \
+  "$OUT/dom.html" > "$OUT/styles/inline.css" 2>/dev/null
+
+echo "[capture] fonts (@font-face woff2 -> ttf)"
+cat "$OUT"/styles/*.css 2>/dev/null |
+  grep -oE 'url\([^)]*\.woff2[^)]*\)' | sed 's/url(//;s/)$//;s/["'\'']//g' |
+  sort -u | head -8 |
+  while read -r fu; do
+    u="$(abs_url "$fu")"
+    name="$(basename "${u%%\?*}" .woff2)"
+    curl -fsSL -A "$UA" -o "$OUT/fonts/$name.woff2" "$u" 2>/dev/null &&
+      woff2_decompress "$OUT/fonts/$name.woff2" 2>/dev/null &&
+      echo "  $name.ttf"
+  done
+rm -f "$OUT"/fonts/*.woff2
+
+echo "[capture] logos"
+curl -fsSL -A "$UA" -o "$OUT/logos/favicon.png" "$ORIGIN/favicon.ico" 2>/dev/null || true
+grep -oE '<meta[^>]*property="og:image"[^>]*>' "$OUT/dom.html" |
+  grep -oE 'content="[^"]+"' | sed 's/content="//;s/"$//' | head -1 |
+  while read -r og; do curl -fsSL -A "$UA" -o "$OUT/logos/og-image.png" "$(abs_url "$og")" 2>/dev/null; done
+grep -oE '(src|href)="[^"]*logo[^"]*\.(svg|png)[^"]*"' "$OUT/dom.html" |
+  sed -E 's/^(src|href)="//;s/"$//' | sort -u | head -5 |
+  while read -r lu; do
+    u="$(abs_url "$lu")"
+    curl -fsSL -A "$UA" -o "$OUT/logos/$(basename "${u%%\?*}")" "$u" 2>/dev/null && echo "  $(basename "${u%%\?*}")"
+  done
+# inline svg marked as logo (first match)
+perl -0777 -ne 'if (/(<svg[^>]*(?:logo|Logo)[^>]*>.*?<\/svg>)/s) { print $1 }' \
+  "$OUT/dom.html" > "$OUT/logos/inline-logo.svg" 2>/dev/null
+[ -s "$OUT/logos/inline-logo.svg" ] || rm -f "$OUT/logos/inline-logo.svg"
+
+echo "[capture] brand.json"
+{
+  echo '{'
+  echo '  "url": "'"$URL"'",'
+  echo '  "css_color_vars": {'
+  cat "$OUT"/styles/*.css 2>/dev/null |
+    grep -oE '\--[a-zA-Z0-9-]*(color|Color|bg|background|accent|primary|secondary)[a-zA-Z0-9-]*:[^;}]+' |
+    sed 's/:[[:space:]]*/": "/;s/^--/    "--/;s/$/",/' | sort -u | head -20
+  echo '    "_": ""'
+  echo '  },'
+  echo '  "hex_by_frequency": ['
+  cat "$OUT"/styles/*.css "$OUT/dom.html" 2>/dev/null |
+    grep -oE '#[0-9a-fA-F]{6}\b' | tr 'A-F' 'a-f' | sort | uniq -c | sort -rn | head -12 |
+    awk '{printf "    {\"hex\": \"%s\", \"count\": %s},\n", $2, $1}'
+  echo '    {"hex": "", "count": 0}'
+  echo '  ],'
+  echo '  "font_families": ['
+  cat "$OUT"/styles/*.css 2>/dev/null |
+    grep -oE 'font-family:[^;}]+' | sed 's/font-family:[[:space:]]*//' |
+    sort | uniq -c | sort -rn | head -8 |
+    sed 's/^[[:space:]]*[0-9]*[[:space:]]*/    "/;s/$/",/'
+  echo '    ""'
+  echo '  ]'
+  echo '}'
+} > "$OUT/brand.json"
+
+echo "[capture] done -> $OUT"
+ls "$OUT/page.png" "$OUT/fonts" "$OUT/logos" 2>/dev/null

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-check"
+description = "Enables the start_check command without any pre-configured scope."
+commands.allow = ["start_check"]
+
+[[permission]]
+identifier = "deny-start-check"
+description = "Denies the start_check command without any pre-configured scope."
+commands.deny = ["start_check"]

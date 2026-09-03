@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Build production Rust helpers and stage only the runtime dylibs.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+cargo build --release "$@"
+
+OUT="$ROOT/native/release"
+mkdir -p "$OUT"
+case "$(uname -s)" in
+  Darwin) ext=".dylib" ;;
+  Linux) ext=".so" ;;
+  *) echo "ellua: unsupported native staging platform: $(uname -s)" >&2; exit 1 ;;
+esac
+for name in decode html layout vector effects scene3d; do
+  src="$ROOT/target/release/libellua_${name}${ext}"
+  [[ -f "$src" ]] && cp -f "$src" "$OUT/"
+done
+if [[ -f "$ROOT/target/release/ellua-html-shot" ]]; then
+  cp -f "$ROOT/target/release/ellua-html-shot" "$OUT/"
+fi
+
+echo "ellua: native dylibs staged in $OUT"

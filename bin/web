@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Preview host: Lua 5.4 WASM + Canvas2D. Serve the ellua root so /lib and /evals resolve.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PORT="${PORT:-8765}"
+cd "$ROOT"
+echo "ellua web  http://127.0.0.1:${PORT}/web/"
+exec python3 -m http.server "$PORT"

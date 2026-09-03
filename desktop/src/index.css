@@ -1,0 +1,76 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+}
+
+:root {
+  --background: hsl(0 0% 98%);
+  --foreground: hsl(240 6% 12%);
+  --muted: hsl(240 5% 94%);
+  --muted-foreground: hsl(240 4% 46%);
+  --border: hsl(240 6% 88%);
+  --ring: hsl(240 5% 65%);
+  --accent: hsl(262 52% 48%);
+  --accent-foreground: hsl(0 0% 100%);
+  --card: hsl(0 0% 100%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(240 6% 12%);
+}
+
+.dark {
+  --background: hsl(240 6% 7%);
+  --foreground: hsl(0 0% 93%);
+  --muted: hsl(240 5% 14%);
+  --muted-foreground: hsl(240 4% 58%);
+  --border: hsl(240 4% 18%);
+  --ring: hsl(240 4% 40%);
+  --accent: hsl(262 55% 62%);
+  --accent-foreground: hsl(0 0% 100%);
+  --card: hsl(240 5% 10%);
+  --popover: hsl(240 5% 12%);
+  --popover-foreground: hsl(0 0% 93%);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Hide native scrollbars — scroll still works via trackpad/wheel */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

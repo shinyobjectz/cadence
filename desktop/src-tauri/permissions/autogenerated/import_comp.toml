@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-comp"
+description = "Enables the import_comp command without any pre-configured scope."
+commands.allow = ["import_comp"]
+
+[[permission]]
+identifier = "deny-import-comp"
+description = "Denies the import_comp command without any pre-configured scope."
+commands.deny = ["import_comp"]

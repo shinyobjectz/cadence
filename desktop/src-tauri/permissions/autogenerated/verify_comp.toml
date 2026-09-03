@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-verify-comp"
+description = "Enables the verify_comp command without any pre-configured scope."
+commands.allow = ["verify_comp"]
+
+[[permission]]
+identifier = "deny-verify-comp"
+description = "Denies the verify_comp command without any pre-configured scope."
+commands.deny = ["verify_comp"]

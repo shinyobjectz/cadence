@@ -1,0 +1,10 @@
+[package]
+name = "vello-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vello_cpu = "0.1"
+
+[profile.release]
+lto = true

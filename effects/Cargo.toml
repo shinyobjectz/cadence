@@ -1,0 +1,8 @@
+[package]
+name = "ellua-effects"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ellua_effects"
+crate-type = ["cdylib"]

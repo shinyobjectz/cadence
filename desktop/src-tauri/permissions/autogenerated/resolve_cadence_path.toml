@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-cadence-path"
+description = "Enables the resolve_cadence_path command without any pre-configured scope."
+commands.allow = ["resolve_cadence_path"]
+
+[[permission]]
+identifier = "deny-resolve-cadence-path"
+description = "Denies the resolve_cadence_path command without any pre-configured scope."
+commands.deny = ["resolve_cadence_path"]

@@ -1,0 +1,11 @@
+[package]
+name = "ellua-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Self-contained launcher for the Ellua renderer"
+license = "UNLICENSED"
+
+[[bin]]
+name = "ellua"
+path = "src/main.rs"
+

@@ -1,0 +1,311 @@
+{
+  "title": "Ellua Renderer Eval",
+  "subtitle": "Public visual suite for the headless renderer. Compositions are original fixtures; media is Wikimedia Commons / NASA public domain, CC Wikimedia SVGs, and an Apache-2.0 Lottie sample. No product-demo or private-project content.",
+  "cases": [
+    {
+      "id": "primitives",
+      "file": "evals/cases/primitives.lua",
+      "title": "Primitives",
+      "tests": ["rect", "circle", "text", "color", "parallel", "rx"],
+      "description": "Core filled shapes, rounded corners, color interpolation, and parallel tweens."
+    },
+    {
+      "id": "eases",
+      "file": "evals/cases/eases.lua",
+      "title": "Eases",
+      "tests": ["linear", "quad", "cubic", "sine", "expo", "back", "elastic", "spring"],
+      "description": "Identical drop, eight easing curves including a seek-safe spring."
+    },
+    {
+      "id": "type",
+      "file": "evals/cases/type.lua",
+      "title": "Type",
+      "tests": ["text", "kinetic", "stagger"],
+      "description": "Static labels plus per-character kinetic stagger from measured glyph widths."
+    },
+    {
+      "id": "fonts",
+      "file": "evals/cases/fonts.lua",
+      "title": "Fonts",
+      "tests": ["ttf", "families", "metrics"],
+      "description": "Same word through Roboto, Playfair Display, JetBrains Mono, and Fraunces."
+    },
+    {
+      "id": "type_styles",
+      "file": "evals/cases/type_styles.lua",
+      "title": "Type styles",
+      "tests": ["regular", "italic", "bold", "kinetic", "cut"],
+      "description": "Apple-spot pacing: one cut on screen at a time. Regular pops, italic replaces it, bold slams in letter by letter, then a three-line lockup. No overlapping styles."
+    },
+    {
+      "id": "compositing",
+      "file": "evals/cases/compositing.lua",
+      "title": "Compositing",
+      "tests": ["surface", "shadow", "group", "screen", "glyphs"],
+      "description": "Soft shadow, group parenting, nested opacity, and glyphs after a screen blend."
+    },
+    {
+      "id": "blend_modes",
+      "file": "evals/cases/blend_modes.lua",
+      "title": "Blend modes",
+      "tests": ["alpha", "add", "subtract", "multiply", "lighten", "darken", "screen", "replace"],
+      "description": "Every supported LÖVE blend mode on overlapping discs."
+    },
+    {
+      "id": "clip_mask",
+      "file": "evals/cases/clip_mask.lua",
+      "title": "Clip mask",
+      "tests": ["clip_node", "clip_invert", "stencil"],
+      "description": "Live clip_node wipe plus inverted text outside a sliding pill."
+    },
+    {
+      "id": "motion",
+      "file": "evals/cases/motion.lua",
+      "title": "Motion",
+      "tests": ["path", "wiggle", "stagger"],
+      "description": "Catmull-Rom path, organic wiggle, and staggered bar heights."
+    },
+    {
+      "id": "draw",
+      "file": "evals/cases/draw.lua",
+      "title": "Custom draw",
+      "tests": ["draw", "love.graphics"],
+      "description": "Pure f(t) escape hatch through the host graphics API."
+    },
+    {
+      "id": "vector",
+      "file": "evals/cases/vector.lua",
+      "title": "Vector",
+      "tests": ["vello", "gradient", "path", "grain"],
+      "requires": ["native-vector"],
+      "description": "vello_cpu gradients, bezier stroke, and deterministic grain."
+    },
+    {
+      "id": "effects",
+      "file": "evals/cases/effects.lua",
+      "title": "Effects",
+      "tests": ["hue", "blur", "saturate"],
+      "requires": ["native-vector", "native-effects"],
+      "description": "Native adjustment pass on a raster-backed vector layer."
+    },
+    {
+      "id": "html",
+      "file": "evals/cases/html.lua",
+      "title": "HTML",
+      "tests": ["blitz", "progress"],
+      "requires": ["native-html"],
+      "description": "Blitz HTML/CSS card with tweened {{progress}} substitution."
+    },
+    {
+      "id": "page",
+      "file": "evals/cases/page.lua",
+      "title": "Page",
+      "tests": ["css", "image", "woff2", "viewport"],
+      "requires": ["native-html"],
+      "description": "Full HTML document with linked CSS, woff2 @font-face, and a local image. No Chrome."
+    },
+    {
+      "id": "page_bake",
+      "file": "evals/cases/page_bake.lua",
+      "title": "Page bake",
+      "tests": ["script", "dom", "resolve"],
+      "requires": ["native-html"],
+      "description": "Classic script mutates the document at resolve; Blitz paints the dumped DOM. No JS in evaluate(t)."
+    },
+    {
+      "id": "flex",
+      "file": "evals/cases/flex.lua",
+      "title": "Flex",
+      "tests": ["taffy", "stagger"],
+      "requires": ["native-layout"],
+      "description": "Compile-time Taffy row solve, then item stagger from solved positions."
+    },
+    {
+      "id": "perspective_explode",
+      "file": "evals/cases/perspective_explode.lua",
+      "title": "Perspective explode",
+      "tests": ["perspective", "dolly", "yaw", "layers"],
+      "requires": ["resvg"],
+      "description": "Dashboard chrome, sidebar, card, and button start stacked on the page, then lift toward camera on separate Z planes."
+    },
+    {
+      "id": "perspective_focus",
+      "file": "evals/cases/perspective_focus.lua",
+      "title": "Perspective focus",
+      "tests": ["aperture", "focus_u", "focus_v", "truck"],
+      "requires": ["resvg"],
+      "description": "Tilted UI plane with the lens open; focus and truck pull onto the Publish button while the far edge defocuses."
+    },
+    {
+      "id": "camera",
+      "file": "evals/cases/camera.lua",
+      "title": "Shared camera",
+      "tests": ["camera", "dolly", "z-sort"],
+      "description": "One s:camera orbits two perspective cards. Far card (smaller dolly) draws first."
+    },
+    {
+      "id": "world3d",
+      "file": "evals/cases/world3d.lua",
+      "title": "World 3D",
+      "tests": ["gltf", "mesh", "look-at", "seek"],
+      "requires": ["native-scene3d"],
+      "description": "A world is an offscreen RGBA node. glTF cube and a sphere pose from t; the camera trucks on look-at."
+    },
+    {
+      "id": "video",
+      "file": "evals/cases/video.lua",
+      "title": "Video",
+      "tests": ["webm", "cover-crop", "overlay"],
+      "description": "NASA Earth-at-night WebM from Wikimedia Commons, cover-cropped with type."
+    },
+    {
+      "id": "video_layers",
+      "file": "evals/cases/video_layers.lua",
+      "title": "Video layers",
+      "tests": ["two-decoders", "rx", "transform"],
+      "description": "Two independent public-domain WebM decoders: plate plus a floating card."
+    },
+    {
+      "id": "image",
+      "file": "evals/cases/image.lua",
+      "title": "Image",
+      "tests": ["jpeg", "scale", "ken-burns"],
+      "description": "Apollo 17 Blue Marble JPEG with a slow Ken Burns push."
+    },
+    {
+      "id": "svg",
+      "file": "evals/cases/svg.lua",
+      "title": "SVG",
+      "tests": ["resvg", "group"],
+      "requires": ["resvg"],
+      "description": "Wikimedia SVGs (compass, helium atom, NASA worm) rasterized by resvg."
+    },
+    {
+      "id": "lottie",
+      "file": "evals/cases/lottie.lua",
+      "title": "Lottie",
+      "tests": ["thorvg", "loop"],
+      "requires": ["thorvg"],
+      "description": "Official AndroidWave Lottie sample, frame-addressed through ThorVG."
+    },
+    {
+      "id": "audio",
+      "file": "evals/cases/audio.lua",
+      "title": "Audio mix",
+      "tests": ["ogg", "fade", "filter_complex"],
+      "description": "Public-domain piano roll mixed under NASA video via ffmpeg, never the engine."
+    },
+    {
+      "id": "fx",
+      "file": "evals/cases/fx.lua",
+      "title": "FX chain",
+      "tests": ["s:fx", "bloom", "vignette", "chroma", "shadertoy"],
+      "description": "Practical lights behind GLOW. Bloom and chroma breathe; Shadertoy is the pulse."
+    },
+    {
+      "id": "type_wrap",
+      "file": "evals/cases/type_wrap.lua",
+      "title": "Wrapped type",
+      "tests": ["wrap", "tags", "reveal", "type-on"],
+      "description": "Column-wrapped paragraph with {c:#hex} color tags and a seek-safe type-on reveal."
+    },
+    {
+      "id": "displace",
+      "file": "evals/cases/displace.lua",
+      "title": "Mesh displace",
+      "tests": ["mesh", "vertex-warp", "image", "type"],
+      "description": "Grid mesh displacement on Apollo 17 and on rasterized type. amp/freq are timeline uniforms."
+    },
+    {
+      "id": "spritesheet",
+      "file": "evals/cases/spritesheet.lua",
+      "title": "Spritesheet",
+      "tests": ["aseprite", "fps", "frame-addressed"],
+      "description": "Aseprite JSON+PNG, two clocks. Frame = floor((t−from)·fps) % n."
+    },
+    {
+      "id": "particles",
+      "file": "evals/cases/particles.lua",
+      "title": "Particles",
+      "tests": ["seed", "n", "life", "closed-form"],
+      "description": "GO, then the burst. Same seed family, two colors, one firework."
+    },
+    {
+      "id": "hsluv",
+      "file": "evals/cases/hsluv.lua",
+      "title": "HSLuv color",
+      "tests": ["rgb", "oklab", "hsluv"],
+      "description": "The word chroma on three fills. RGB muddies; OKLab and HSLuv keep the hue."
+    },
+    {
+      "id": "drop",
+      "file": "evals/cases/drop.lua",
+      "title": "Physics drop",
+      "tests": ["box2d", "bake", "t:drop"],
+      "description": "Colliding glyphs. Box2D runs once at compile with a fixed dt; render is ordinary x/y/rotation."
+    },
+    {
+      "id": "okhsl",
+      "file": "evals/cases/okhsl.lua",
+      "title": "OKHSL palettes",
+      "tests": ["okhsl", "palette", "lerp"],
+      "description": "Eight even OKHSL steps, then AURORA rides the ramp. Palettes as the picture, not a comparison grid."
+    },
+    {
+      "id": "grade",
+      "file": "evals/cases/grade.lua",
+      "title": "Grade / POSTER",
+      "tests": ["kawase", "tonemap", "posterize", "pixelate", "worley"],
+      "description": "One night still. Kawase air, ACES crush, a poster sting, then settle."
+    },
+    {
+      "id": "chart",
+      "file": "evals/cases/chart.lua",
+      "title": "Charts",
+      "tests": ["bar", "line", "rough", "reveal", "mix"],
+      "description": "A revenue card. Bars land, a rough line draws, then the mix is Q3 → Q4."
+    },
+    {
+      "id": "ornaments",
+      "file": "evals/cases/ornaments.lua",
+      "title": "Ornaments",
+      "tests": ["linker", "compass", "star"],
+      "description": "Studio ident. Linker writes the line, the seal turns, NORTH lands."
+    },
+    {
+      "id": "bounce",
+      "file": "evals/cases/bounce.lua",
+      "title": "Bounce eases",
+      "tests": ["bounceOut"],
+      "description": "One drop, one floor, bounceOut. The comparison grid already lives in eases."
+    },
+    {
+      "id": "captions",
+      "file": "evals/cases/captions.lua",
+      "title": "Captions",
+      "tests": ["cues", "steps", "lower-third"],
+      "description": "Broadcast lower third. The bar writes, then the line changes with the VO."
+    },
+    {
+      "id": "pulse",
+      "file": "evals/cases/pulse.lua",
+      "title": "Audio pulse",
+      "tests": ["follow", "bake"],
+      "description": "A kick on a mark. One baked envelope drives the disc and a row of meters."
+    },
+    {
+      "id": "spine",
+      "file": "evals/cases/spine.lua",
+      "title": "Spine pose",
+      "tests": ["bones", "keyframes", "seek"],
+      "description": "A wave hello. Bones are the figure; hey. is the line. Pose from t."
+    },
+    {
+      "id": "type_sdf",
+      "file": "evals/cases/type_sdf.lua",
+      "title": "SDF type",
+      "tests": ["outline", "weight", "coverage"],
+      "description": "On-air bug. LIVE with outline as the signal and weight as the breath."
+    }
+  ]
+}

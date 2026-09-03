@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ellua WASM</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      --bg: #090c12;
+      --ink: #f4f6fb;
+      --mute: #8b97b0;
+      --line: #243044;
+      --accent: #3ee0c6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 18% -8%, #1a2744, var(--bg) 42rem);
+    }
+    main {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 36px 24px 72px;
+    }
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      letter-spacing: -0.05em;
+      line-height: 0.95;
+      margin: 0 0 10px;
+    }
+    .lede {
+      color: var(--mute);
+      max-width: 68ch;
+      line-height: 1.5;
+      margin: 0 0 28px;
+    }
+    .bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    select, button {
+      background: #151c2c;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+      min-width: 5.5rem;
+    }
+    button:hover { border-color: var(--accent); }
+    input[type="range"] { flex: 1; min-width: 160px; }
+    #time, #status { color: var(--mute); font-variant-numeric: tabular-nums; }
+    #status[data-kind="ok"] { color: var(--accent); }
+    #status[data-kind="err"] { color: #e85aa8; }
+    .stage-wrap {
+      background: #05070c;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+    }
+    canvas { display: block; max-width: 100%; height: auto; }
+    .note { margin-top: 18px; color: var(--mute); font-size: 0.92rem; }
+    code { color: #c5cde0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ellua WASM</h1>
+    <p class="lede">
+      Same Lua compositions, running in a Lua 5.4 VM compiled to WebAssembly
+      (wasmoon). The native ellua-love host still owns encode; this is the
+      seek-safe browser preview.
+    </p>
+    <div class="bar">
+      <select id="case" aria-label="Composition"></select>
+      <button id="play" type="button">Pause</button>
+      <input id="scrub" type="range" min="0" max="2" value="0" aria-label="Seek">
+      <span id="time">0.00s</span>
+      <span id="status">booting…</span>
+    </div>
+    <div class="stage-wrap">
+      <canvas id="stage" width="1280" height="720"></canvas>
+    </div>
+    <p class="note">
+      Serve from the ellua root so comps can load:
+      <code>bin/web</code> then open <code>/web/</code>.
+      Canvas2D covers primitives, type, images, SVG, spritesheets, and video
+      (HTML decode, seek via <code>currentTime</code>). Lottie uses lottie-web.
+      HTML/Blitz, vello, mesh warp, Box2D bake, and shader FX stay native.
+    </p>
+  </main>
+  <script type="module" src="./host.js?v=6"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "Cadence",
+  "description": "Programmatic video from Lua — render, lint, check, and verify motion graphics without a browser.",
+  "skills": [
+    {
+      "name": "cadence",
+      "path": "skills/cadence"
+    }
+  ]
+}

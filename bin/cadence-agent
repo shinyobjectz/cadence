@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Agent-first Cadence CLI — verify, doctor, feedback, probe/query wrappers.
+# Agents should prefer: cadence verify comps/foo.lua --json
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NODE="${NODE:-node}"
+
+usage() {
+  cat <<EOF
+usage: cadence-agent <command> [args]
+
+Commands:
+  doctor [--json] [--project DIR]     Environment probes (love, ffmpeg, wasmoon)
+  verify <comp.lua> [flags]           Tier 0 wasm compile + lint + check pipeline
+  feedback <comp.lua>|--from FILE     Agent-readable markdown summary
+  lint|check|hash|render|preview      Delegates to bin/cadence (LÖVE runtime)
+  query <sidecar.npz> "text"          Semantic query (requires probe sidecar)
+  probe <video|comp> [flags]          Tier-3 embeddings (Python dev tool)
+
+Verify flags:
+  --json --strict --skip-lint --skip-check --wasm-only
+
+Examples:
+  cadence-agent doctor --json
+  cadence-agent verify comps/launch.lua --json
+  cadence-agent feedback comps/launch.lua
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  doctor)
+    shift
+    exec "$NODE" "$ROOT/scripts/cadence-doctor.mjs" "$@"
+    ;;
+  verify)
+    shift
+    exec "$NODE" "$ROOT/scripts/cadence-verify.mjs" "$@"
+    ;;
+  feedback)
+    shift
+    exec "$NODE" "$ROOT/scripts/cadence-feedback.mjs" "$@"
+    ;;
+  query)
+    shift
+    exec python3 "$ROOT/checks/query.py" "$@"
+    ;;
+  probe)
+    shift
+    exec python3 "$ROOT/checks/probe.py" "$@"
+    ;;
+  lint|check|hash|render|preview|setup|models|tts|align|features)
+    exec "$ROOT/bin/cadence" "$cmd" "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    exit 0
+    ;;
+  *)
+    echo "cadence-agent: unknown command \`$cmd\`" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

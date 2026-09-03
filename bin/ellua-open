@@ -1,0 +1,40 @@
+#!/bin/sh
+# Open a render in QuickTime, freshly and already playing.
+#
+# `open file.mp4` on a path QuickTime already has loaded just re-focuses the
+# cached document — you see the PREVIOUS render sitting on a paused frame, which
+# reads as "the video is dead". Re-renders to a stable filename hit this every
+# time. Close the stale document first, then open and hit play.
+set -e
+f="$1"
+[ -n "$f" ] || { echo "usage: ellua-open FILE.mp4" >&2; exit 1; }
+[ -f "$f" ] || { echo "ellua-open: no such file: $f" >&2; exit 1; }
+abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
+
+if pgrep -x "QuickTime Player" >/dev/null 2>&1; then
+  # close only the document(s) pointing at this file; leave other windows alone
+  osascript >/dev/null 2>&1 <<OSA || true
+tell application "QuickTime Player"
+  repeat with d in (get every document)
+    try
+      if (POSIX path of (get file of d)) is equal to "$abs" then close d saving no
+    end try
+  end repeat
+end tell
+OSA
+fi
+
+open "$abs"
+# give QuickTime a moment to load, then play from the top
+osascript >/dev/null 2>&1 <<OSA || true
+tell application "QuickTime Player"
+  repeat 40 times
+    if (count of documents) > 0 then exit repeat
+    delay 0.1
+  end repeat
+  try
+    set current time of front document to 0
+    play front document
+  end try
+end tell
+OSA
