@@ -96,13 +96,23 @@ return e.comp {
 - **~10MB engine** — vendored LÖVE fork, not headless Chrome
 - **Three hosts, one API** — native encode, wasmoon preview, Rust helpers
 
+## Renderer
+
+`CADENCE_SCENE=1` paints the frame through `cadence-scene` (vello_cpu + parley):
+one rasterizer for text, shapes, images, html, vector, masks, blends and
+shadows, with no GPU readback when a comp is fully scene-owned. Kinds not ported
+yet fall back to love per node. Details, coverage and measurements:
+[docs/SCENE.md](docs/SCENE.md). `bin/golden capture|compare` holds per-frame
+hashes across renderer changes.
+
 ## Layout
 
 | Path | Purpose |
 |------|---------|
 | `bin/cadence` | CLI entry (render, verify, doctor, …) |
 | `lib/cadence/` | Host-free authoring API |
-| `runtime/` | LÖVE offline host |
+| `runtime/` | LÖVE offline host (`scene.lua` = bridge to the rasterizer) |
+| `scene/` | `cadence-scene`: the vello_cpu + parley rasterizer |
 | `desktop/` | Tauri + React editor (optional) |
 | `skills/cadence/` | Official agent skill |
 | `evals/` | Public visual suite |

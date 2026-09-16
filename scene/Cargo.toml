@@ -1,0 +1,14 @@
+[package]
+name = "cadence-scene"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "cadence_scene"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vello_cpu = { version = "0.2", features = ["multithreading"] }
+vello_common = "0.2"
+glifo = "0.3"
+parley = { version = "0.11", default-features = false, features = ["std"] }

@@ -51,10 +51,12 @@ function R.layout(nodes)
     if n.kind == "kinetic" then
       -- measure per-char widths with the real font, center the run on i.x
       local i = n.initial
-      local font = require("painter").font(i.size, i.font)
+      local scene = require("scene")
+      local font = (not scene.enabled) and require("painter").font(i.size, i.font) or nil
+      local fid = scene.enabled and scene.font_id(i.font) or nil
       local widths, total = {}, 0
       for ch in i.text:gmatch(".") do
-        local w = font:getWidth(ch)
+        local w = font and font:getWidth(ch) or scene.measure(fid, i.size, ch)
         widths[#widths + 1] = { ch = ch, w = w }
         total = total + w + i.spacing
       end

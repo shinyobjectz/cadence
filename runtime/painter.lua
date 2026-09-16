@@ -371,6 +371,248 @@ local function apply_fx(comp, node, t)
   g.pop()
 end
 
+
+-- ---- cadence-scene (CADENCE_SCENE=1): text goes to the vello rasterizer ----
+local scene = require("scene")
+P.scene = scene
+local scene_builder = scene.enabled and scene.new_builder() or nil
+
+-- compose love's translate/rotate/scale chain into one absolute affine
+local function affine_mul(m, n)
+  return {
+    m[1] * n[1] + m[3] * n[2], m[2] * n[1] + m[4] * n[2],
+    m[1] * n[3] + m[3] * n[4], m[2] * n[3] + m[4] * n[4],
+    m[1] * n[5] + m[3] * n[6] + m[5], m[2] * n[5] + m[4] * n[6] + m[6],
+  }
+end
+local function node_affine(chain, node)
+  local m = { 1, 0, 0, 1, 0, 0 }
+  local function trs(n)
+    local x, y = n:get("x") or 0, n:get("y") or 0
+    local r = n:get("rotation") or 0
+    local s = n:get("scale") or 1
+    local c, sn = math.cos(r), math.sin(r)
+    m = affine_mul(m, { c * s, sn * s, -sn * s, c * s, x, y })
+  end
+  for _, p in ipairs(chain) do trs(p) end
+  if node then trs(node) end
+  return m
+end
+
+-- flush pending scene commands into one full-frame premultiplied layer
+local scene_text, scene_shape, scene_image, scene_vector
+local scene_data, scene_img
+function P.scene_flush(comp)
+  if not scene_builder or not scene_builder.pending then return end
+  local w, h = comp.width, comp.height
+  if not scene_data then
+    scene_data = love.image.newImageData(w, h, "rgba8")
+    scene_img = love.graphics.newImage(scene_data)
+  end
+  local t0 = love.timer.getTime()
+  scene.render(scene_builder, w, h, scene_data:getFFIPointer(), scene_data:getSize())
+  P.scene_time = (P.scene_time or 0) + (love.timer.getTime() - t0)
+  P.scene_flushes = (P.scene_flushes or 0) + 1
+  scene_img:replacePixels(scene_data)
+  local g = love.graphics
+  g.push("all")
+  g.origin()
+  g.setColor(1, 1, 1, 1)
+  g.setBlendMode("alpha", "premultiplied")
+  g.draw(scene_img, 0, 0)
+  g.pop()
+  scene_builder:reset()
+end
+
+-- which nodes the scene crate paints today (grows one kind at a time)
+local SCENE_KINDS = { text = true, rect = true, circle = true, flex = true, group = true, kinetic = true,
+  image = true, svg = true, page = true, vector = true, html = true }
+local EFFECT_DEFAULTS = { effect_blur = 0, effect_brightness = 1, effect_contrast = 1, effect_saturate = 1,
+  effect_grayscale = 0, effect_sepia = 0, effect_invert = 0, effect_opacity = 1, effect_hue_rotate = 0 }
+local SCENE_BLENDS = { alpha = true, multiply = true, screen = true, darken = true, lighten = true, add = true }
+local function scene_owns(node)
+  if not SCENE_KINDS[node.kind] then return false end
+  local i = node.initial
+  if i.perspective then return false end
+  if i.clip_node and i.clip_invert then return false end
+  if i.blend and not SCENE_BLENDS[i.blend] then return false end
+  -- vello_cpu 0.2 implements only blur/drop-shadow/flood/offset filters; colour
+  -- effects (brightness, saturate, hue…) stay on the love path per node.
+  for key, default in pairs(EFFECT_DEFAULTS) do
+    if key ~= "effect_blur" and key ~= "effect_opacity" then
+      local v = node:get(key)
+      if v ~= nil and v ~= default then return false end
+    end
+  end
+  return true
+end
+P.scene_owns = scene_owns
+
+scene_shape = function(node, opacity, chain)
+  scene_builder:transform(node_affine(chain, node))
+  local c = node:get("color")
+  if type(c) == "string" then c = require("ellua.color").parse(c) end
+  c = c or { 1, 1, 1, 1 }
+  local cc = { c[1], c[2], c[3], (c[4] or 1) * opacity }
+  if node.kind == "circle" then
+    scene_builder:circle(0, 0, node:get("r"), cc)
+  else
+    local w, h = node:get("w"), node:get("h")
+    local ox, oy = anchor_offset(node, w, h)
+    scene_builder:rect(ox, oy, w, h, cc, node:get("rx") or 0)
+  end
+end
+
+
+local scene_imgdata = {}
+scene_image = function(node, opacity, chain)
+  local path = node.file
+  if not scene_imgdata[path] then
+    local f = assert(_ELLUA_IOOPEN(path, "rb"), "ellua: cannot read " .. path)
+    local bytes = f:read("*a"); f:close()
+    scene_imgdata[path] = love.image.newImageData(love.filesystem.newFileData(bytes, "f.png"))
+  end
+  local id = scene.image_id(path, scene_imgdata[path])
+  local w, h = node:get("w"), node:get("h")
+  local ox, oy = anchor_offset(node, w, h)
+  scene_builder:transform(node_affine(chain, node))
+  scene_builder:image(id, ox, oy, w, h, node:get("rx") or 0, opacity)
+end
+
+scene_vector = function(node, opacity, chain, t)
+  local i = node.initial
+  local ox, oy = anchor_offset(node, i.w, i.h)
+  local m = node_affine(chain, node)
+  -- shift into the node box so draw(v, t) keeps its 0..w/0..h coordinates
+  m = affine_mul(m, { 1, 0, 0, 1, ox, oy })
+  scene_builder:transform(m)
+  scene_builder:clip_push(0, 0, i.w, i.h, 0)
+  scene_builder.grain_box = { 0, 0, i.w, i.h }
+  i.draw(scene_builder, t, node)
+  scene_builder.grain_box = nil
+  scene_builder:clip_pop()
+  -- node opacity: vector draws carry their own alpha; fold opacity via a layer
+  -- is not available per-command, so opacity < 1 falls back to love (scene_owns)
+end
+
+local function scene_html(node, opacity, chain)
+  local html = require("html")
+  if not html.available then return false end
+  local i = node.initial
+  if not node.htmldata then
+    node.htmldata = love.image.newImageData(i.w, i.h, "rgba8")
+    node.html_key = nil
+  end
+  local progress = node:get("progress") or 0
+  local progress_key = string.format("%.2f", progress)
+  local changed = node.html_key ~= progress_key
+  if changed then
+    local markup = i.html:gsub("{{progress_int}}", tostring(math.floor(progress + 0.5)))
+      :gsub("{{progress}}", progress_key)
+    html.render(markup, i.w, i.h, 1.0, node.htmldata:getFFIPointer(), node.htmldata:getSize())
+    node.html_key = progress_key
+  end
+  -- blitz output is premultiplied; the slot expects straight alpha. Unpremultiply once on change.
+  if changed then
+    local ffi = require("ffi")
+    local px = ffi.cast("uint8_t*", node.htmldata:getFFIPointer())
+    for k = 0, i.w * i.h - 1 do
+      local a = px[k * 4 + 3]
+      if a > 0 and a < 255 then
+        for c = 0, 2 do px[k * 4 + c] = math.min(255, math.floor(px[k * 4 + c] * 255 / a + 0.5)) end
+      end
+    end
+  end
+  local id = scene.image_slot(node, node.htmldata, changed)
+  local ox, oy = anchor_offset(node, i.w, i.h)
+  scene_builder:transform(node_affine(chain, node))
+  scene_builder:image(id, ox, oy, i.w, i.h, 0, opacity)
+  return true
+end
+
+-- one scene-owned node: clip / blend / shadow / effect layers around its paint
+local function scene_node(node, opacity, chain, t)
+  local i = node.initial
+  local pops = 0
+  if i.clip_node then
+    local clipn = i.clip_node
+    local cx, cy = clipn:get("x") or 0, clipn:get("y") or 0
+    local cw, ch = clipn:get("w") or 0, clipn:get("h") or 0
+    local crx = clipn:get("rx") or 0
+    if clipn.initial.anchor == "center" then cx, cy = cx - cw / 2, cy - ch / 2 end
+    if crx > 0 then crx = math.min(crx, cw / 2, ch / 2) end
+    scene_builder:transform(node_affine(chain, nil))
+    scene_builder:clip_push(cx, cy, math.max(cw, 0), math.max(ch, 0), crx)
+    pops = pops + 1
+  end
+  if i.blend and i.blend ~= "alpha" then scene_builder:blend_push(i.blend); pops = pops + 1 end
+  if i.shadow then
+    local sw, sh2 = node:get("w") or 0, node:get("h") or 0
+    if sw > 0 and sh2 > 0 then
+      scene_builder:transform(node_affine(chain, node))
+      local ox, oy = anchor_offset(node, sw, sh2)
+      scene_builder:filter_push(0, (i.shadow.blur or 40) / 2)
+      scene_builder:rect(ox, oy + (i.shadow.dy or 10), sw, sh2, { 0, 0, 0, (i.shadow.alpha or 0.3) * opacity }, node:get("rx") or 0)
+      scene_builder:pop()
+    end
+  end
+  for key, default in pairs(EFFECT_DEFAULTS) do
+    local v = node:get(key)
+    if v ~= nil and v ~= default then
+      if key == "effect_opacity" then scene_builder:opacity_push(v) else scene_builder:filter_push(scene.FILTER[key], v) end
+      pops = pops + 1
+    end
+  end
+  if node.kind == "vector" and opacity < 1 then scene_builder:opacity_push(opacity); pops = pops + 1 end
+  local k = node.kind
+  local ok = true
+  if k == "text" then scene_text(node, opacity, chain)
+  elseif k == "rect" or k == "circle" or k == "flex" then
+    if k ~= "flex" or node:get("color") then scene_shape(node, opacity, chain) end
+  elseif k == "image" or k == "svg" or k == "page" then scene_image(node, opacity, chain)
+  elseif k == "vector" then scene_vector(node, opacity, chain, t)
+  elseif k == "html" then ok = scene_html(node, opacity, chain)
+  else ok = false end
+  for _ = 1, pops do scene_builder:pop() end
+  return ok
+end
+
+scene_text = function(node, opacity, chain)
+  local size = node:get("size") or 32
+  local fontpath = node:get("font")
+  local fid = scene.font_id(fontpath)
+  local text = node:get("text") or node.initial.text or ""
+  local wrap = node.initial.wrap
+  local reveal = node:get("reveal")
+  local runs
+  if wrap or text:find("{", 1, true) or reveal ~= nil then
+    local rich = require("richtext")
+    runs = rich.parse(text, node:get("color"))
+    if reveal ~= nil then runs = rich.reveal(runs, reveal) end
+  else
+    runs = { { text = text, color = node:get("color") } }
+  end
+  local leading = node.initial.leading
+  local tw, th
+  if node:get("anchor") == "center" then
+    local plain = {}
+    for _, r in ipairs(runs) do plain[#plain + 1] = r.text end
+    tw, th = scene.measure(fid, size, table.concat(plain), 0, wrap or 0, leading or 0)
+  end
+  local ox, oy = 0, 0
+  if tw then ox, oy = -tw / 2, -th / 2 end
+  local outline = node:get("outline") or node.initial.outline
+  local weight = node:get("weight") or 0
+  scene_builder:transform(node_affine(chain, node))
+  scene_builder:text(fid, size, ox, oy, runs, {
+    wrap = wrap, leading = leading, opacity = opacity,
+    outline = (outline and outline > 0) and outline * size * 0.04 or 0,
+    outline_color = node.initial.outline_color,
+    embolden = weight > 0 and weight * size * 0.03 or 0,
+  })
+end
+-- ----------------------------------------------------------------------------
+
 paint_node = function(comp, node, t, stop)
   local g = love.graphics
   if node.kind == "fx" and not stop then
@@ -436,7 +678,9 @@ paint_node = function(comp, node, t, stop)
           love.graphics.setBlendMode(bm, ba)
         end
       end
-      if node.kind == "flex" then
+      if scene_builder and not stop and scene_owns(node) and scene_node(node, opacity, chain, t) then
+        -- painted by cadence-scene
+      elseif node.kind == "flex" then
         if node:get("color") then
           setcolor(node:get("color"), opacity)
           g.rectangle("fill", 0, 0, node:get("w"), node:get("h"), node:get("rx") or 0)
@@ -960,6 +1204,35 @@ end
 
 local SKIP_DRAW = { camera = true, light = true, mesh = true }
 
+function P.scene_direct_ok(comp)
+  if not scene_builder then return false end
+  for _, n in ipairs(comp.nodes) do
+    if not SKIP_DRAW[n.kind] and not scene_owns(n) then return false end
+  end
+  return true
+end
+
+-- Direct path (step 3 of the plan): every node is scene-owned, so the frame is
+-- evaluated straight into an ImageData. No canvas, no GPU readback.
+local direct_data
+function P.scene_direct(comp, t)
+  local w, h = comp.width, comp.height
+  if not direct_data then direct_data = love.image.newImageData(w, h, "rgba8") end
+  scene_builder:reset()
+  scene_builder:clear({ comp.background[1], comp.background[2], comp.background[3], 1 })
+  for _, node in ipairs(comp.nodes) do
+    if not SKIP_DRAW[node.kind] and not fx_ancestor(node) then
+      paint_node(comp, node, t)
+    end
+  end
+  local t0 = love.timer.getTime()
+  scene.render(scene_builder, w, h, direct_data:getFFIPointer(), direct_data:getSize())
+  P.scene_time = (P.scene_time or 0) + (love.timer.getTime() - t0)
+  P.scene_flushes = (P.scene_flushes or 0) + 1
+  scene_builder:reset()
+  return direct_data
+end
+
 function P.draw_scene(comp, t)
   local g = love.graphics
   g.clear(comp.background[1], comp.background[2], comp.background[3], 1)
@@ -980,9 +1253,11 @@ function P.draw_scene(comp, t)
   for _, e in ipairs(order) do
     local node = e.node
     if not SKIP_DRAW[node.kind] and not fx_ancestor(node) then
+      if scene_builder and not scene_owns(node) then P.scene_flush(comp) end
       paint_node(comp, node, t)
     end
   end
+  if scene_builder then P.scene_flush(comp) end
   g.setColor(1, 1, 1, 1)
 end
 

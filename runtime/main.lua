@@ -207,15 +207,18 @@ local function offline(comp, opts)
     or function(c) return c:newImageData() end
   local use_async = opts.mode == "render" and gfx.readbackTextureAsync ~= nil
 
-  local function emit(img, i)
+  local function emit(img, i, keep)
     if opts.mode == "hash" then
       local md5 = love.data.encode("string", "hex", love.data.hash("md5", img:getString()))
       io.write(("FRAME %d %s\n"):format(i, md5))
     else
       ffi.C.fwrite(img:getFFIPointer(), 1, img:getSize(), pipe)
     end
-    img:release()
+    if not keep then img:release() end
   end
+  local direct = (os.getenv("CADENCE_SCENE_DIRECT") or "1") ~= "0"
+    and painter.scene_direct_ok and painter.scene_direct_ok(comp)
+  if direct and prof then io.write("PROF direct=1 (no canvas, no readback)\n") end
 
   local pending = {} -- async readbacks in flight, ordered
   local function flush_pending(max_left)
@@ -233,6 +236,13 @@ local function offline(comp, opts)
     local t = i / fps
     comp:evaluate(t)
     local p1 = prof and clock()
+    if direct then
+      local img = painter.scene_direct(comp, t)
+      local p2 = prof and clock()
+      emit(img, i, true)
+      if prof then prof.draw = prof.draw + (p2 - p1); prof.out = prof.out + (clock() - p2) end
+      goto continue
+    end
     gfx.setCanvas({ canvas, stencil = true })
     painter.draw_scene(comp, t)
     gfx.setCanvas()
@@ -250,6 +260,7 @@ local function offline(comp, opts)
       if prof then prof.out = prof.out + (clock() - p3) end
     end
     if prof then prof.draw = prof.draw + (p2 - p1) end
+    ::continue::
   end
   flush_pending(0)
   local wall = love.timer.getTime() - t0
@@ -341,6 +352,10 @@ local function offline(comp, opts)
     io.write(("PROF draw=%.2fs read=%.2fs out=%.2fs other=%.2fs (per-frame ms: draw=%.1f read=%.1f out=%.1f)\n")
       :format(prof.draw, prof.read, prof.out, wall - prof.draw - prof.read - prof.out,
         prof.draw / n * 1000, prof.read / n * 1000, prof.out / n * 1000))
+    if painter.scene_time then
+      io.write(("PROF scene=%.2fs flushes=%d (per-frame ms: scene=%.2f)\n")
+        :format(painter.scene_time, painter.scene_flushes or 0, painter.scene_time / n * 1000))
+    end
   end
   io.flush()
 end

@@ -18,6 +18,8 @@ for name in decode html layout vector effects scene3d; do
   src="$ROOT/target/release/libellua_${name}${ext}"
   [[ -f "$src" ]] && cp -f "$src" "$OUT/"
 done
+src="$ROOT/target/release/libcadence_scene${ext}"
+[[ -f "$src" ]] && cp -f "$src" "$OUT/"
 if [[ -f "$ROOT/target/release/ellua-html-shot" ]]; then
   cp -f "$ROOT/target/release/ellua-html-shot" "$OUT/"
 fi

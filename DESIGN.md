@@ -29,8 +29,19 @@ Locked decisions. Change only with a written reason here.
   helpers stay on ellua-love. Reason: shipping the Metal/LuaJIT fork through
   Emscripten would throw away FFI dylibs and the virtual backbuffer; the painter
   contract already exists so a second host can be small.
-- A Rust renderer is not a planned replacement host. Rust owns distribution and the
-  native helpers; the LÖVE-compatible graphics implementation stays in ellua-love.
+- **Scene rasterizer (decision 2026-09-16, supersedes the line below):** the
+  evaluated node tree paints into ONE rasterizer, `scene/` (`cadence-scene`,
+  vello_cpu + parley), streamed as a flat command list over the C ABI. One
+  antialiaser, one font stack, one gamma. LÖVE shrinks to a frame loop and the
+  ffmpeg pipe; when every node in a comp is scene-owned the renderer skips the
+  canvas and GPU readback entirely (`PROF direct=1`). Node kinds move over one at
+  a time behind `CADENCE_SCENE=1`; kinds the crate cannot paint yet fall back to
+  love per node, with a z-order-preserving flush. See `docs/SCENE.md` for
+  coverage, opcodes and the measurements that justified the direction.
+- ~~A Rust renderer is not a planned replacement host.~~ Rust owns distribution,
+  the native helpers, and now the rasterizer. The LÖVE-compatible `love.*`
+  surface remains for `s:draw` escape hatches, the shader `fx` chain, perspective
+  surfaces and the 3D world layer until those are ported.
 - Authoring core = Lua-native scene graph + signals + coroutine timeline
   (`waitUntil` events). React model (`react-ellua` via react-lua/react-luau host
   config) = later optional skin, never the core.
