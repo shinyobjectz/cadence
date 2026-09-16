@@ -597,15 +597,16 @@ scene_text = function(node, opacity, chain)
   if node:get("anchor") == "center" then
     local plain = {}
     for _, r in ipairs(runs) do plain[#plain + 1] = r.text end
-    tw, th = scene.measure(fid, size, table.concat(plain), 0, wrap or 0, leading or 0)
+    tw, th = scene.measure(fid, size, table.concat(plain), node:get("tracking") or 0, wrap or 0, leading or 0)
   end
   local ox, oy = 0, 0
   if tw then ox, oy = -tw / 2, -th / 2 end
   local outline = node:get("outline") or node.initial.outline
   local weight = node:get("weight") or 0
   scene_builder:transform(node_affine(chain, node))
+  local tracking = node:get("tracking") or 0
   scene_builder:text(fid, size, ox, oy, runs, {
-    wrap = wrap, leading = leading, opacity = opacity,
+    wrap = wrap, leading = leading, opacity = opacity, ls = tracking,
     outline = (outline and outline > 0) and outline * size * 0.04 or 0,
     outline_color = node.initial.outline_color,
     embolden = weight > 0 and weight * size * 0.03 or 0,

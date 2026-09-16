@@ -29,6 +29,7 @@ local ANIMATABLE = {
   x = true, y = true, w = true, h = true, r = true, rx = true,
   rotation = true, scale = true, opacity = true, color = true, size = true,
   progress = true, -- html nodes: {{progress}} substitution, re-rendered on change
+  tracking = true, -- text letter-spacing in px (cadence-scene renderer; love ignores it)
   -- Adjustment-layer controls. These stay flat so timeline segments can seek
   -- them independently; `effects = { blur = 8, contrast = 1.1 }` is only
   -- authoring sugar and expands to these properties at node construction.

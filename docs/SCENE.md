@@ -53,7 +53,7 @@ lib/cadence  (pure Lua)  ──evaluate(t)──▶  runtime/painter.lua
 
 | node kind | scene | notes |
 |---|---|---|
-| text, kinetic chars | ✅ | wrap, leading (metrics-relative like love), tags, reveal, outline, weight |
+| text, kinetic chars | ✅ | wrap, leading (metrics-relative like love), tags, reveal, outline, weight, **`tracking` (letter-spacing, tweenable — scene only)** |
 | rect, circle, flex(color) | ✅ | rx, anchor, group transforms |
 | image, svg, page | ✅ | registered once per file; rx |
 | html | ✅ | Blitz texture, re-uploaded when `progress` changes |
