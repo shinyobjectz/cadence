@@ -1,5 +1,5 @@
 -- cadence-scene bridge: the single vello rasterizer under the timeline.
--- Enabled with CADENCE_SCENE=1. Nodes the scene crate can paint are streamed
+-- On by default (CADENCE_SCENE=0 opts out). Nodes the scene crate can paint are streamed
 -- into one f32 command list (+ string table) instead of love.graphics calls;
 -- the painter flushes the list into one premultiplied RGBA layer whenever a
 -- node the crate cannot paint yet comes next in z-order, and at frame end.
@@ -23,10 +23,12 @@ local ok = pcall(function()
   lib = ffi.load(require("native").lib("cadence_scene"))
 end)
 if ok and lib then S.available = true end
+-- Default since 2026-09-16 (item 7 of docs/SCENE.md): the rasterizer is on
+-- whenever the dylib is present; CADENCE_SCENE=0 selects the love canvas path.
 local want = os.getenv("CADENCE_SCENE")
-S.enabled = S.available and want ~= nil and want ~= "" and want ~= "0"
-if want and want ~= "0" and not S.available then
-  io.stderr:write("cadence: CADENCE_SCENE set but scene dylib not found (build scene/)\n")
+S.enabled = S.available and want ~= "0"
+if want == "1" and not S.available then
+  io.stderr:write("cadence: CADENCE_SCENE=1 but scene dylib not found (build scene/)\n")
 end
 
 -- fonts: path -> id (0 = bundled NotoSans, matching love's default)

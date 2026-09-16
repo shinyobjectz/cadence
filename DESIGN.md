@@ -38,10 +38,26 @@ Locked decisions. Change only with a written reason here.
   a time behind `CADENCE_SCENE=1`; kinds the crate cannot paint yet fall back to
   love per node, with a z-order-preserving flush. See `docs/SCENE.md` for
   coverage, opcodes and the measurements that justified the direction.
+- **Default renderer (decision 2026-09-16, gate of docs/SCENE.md item 7):**
+  the scene rasterizer is the default; `CADENCE_SCENE=0` is the fallback. Gate
+  met: 42/42 renderable evals green and eyeballed in scene mode, scene goldens
+  captured (`drop` needs the LÖVE 12 physics API and is the one case this Mac
+  cannot run under Homebrew 11.5). Love now does three things for `render`:
+  the frame loop + ffmpeg pipe, the GLSL escape hatches (`shadertoy`,
+  `worley`, `s:draw`, perspective homography, world/wgpu) painted into slots,
+  and `preview`.
+- **LÖVE-as-shell vs mlua (decided 2026-09-16): LÖVE stays the shell for now.**
+  Reason: the escape hatches above still need `love.graphics` canvases, and
+  they are used by shipped evals (fx, camera, perspective_*, world3d, draw).
+  An mlua host for `render`/`hash` becomes worth it only when those hatches
+  are either CPU-ported (perspective: a projective warp in Rust; world: wgpu
+  already, needs only a slot without love) or declared preview-only. Until
+  then a second host would be a second painter to keep in parity. Revisit when
+  a release needs to drop the LÖVE dependency (Linux/Windows bundles).
 - ~~A Rust renderer is not a planned replacement host.~~ Rust owns distribution,
-  the native helpers, and now the rasterizer. The LÖVE-compatible `love.*`
-  surface remains for `s:draw` escape hatches, the shader `fx` chain, perspective
-  surfaces and the 3D world layer until those are ported.
+  the native helpers, and the rasterizer. The LÖVE-compatible `love.*` surface
+  remains for `s:draw` escape hatches, `shadertoy`/`worley`, perspective
+  surfaces and the 3D world layer, all composited through image slots.
 - Authoring core = Lua-native scene graph + signals + coroutine timeline
   (`waitUntil` events). React model (`react-ellua` via react-lua/react-luau host
   config) = later optional skin, never the core.

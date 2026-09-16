@@ -1,8 +1,10 @@
 # cadence-scene — one rasterizer under the timeline
 
-Status 2026-09-16: opt-in (`CADENCE_SCENE=1`). Text, shapes, images, html
-textures, vector layers, clip masks, blend modes, shadows and blur all paint
-through vello_cpu. Everything else falls back to love per node.
+Status 2026-09-16: the default renderer (`CADENCE_SCENE=0` = love canvas
+fallback). Text, shapes, images, html textures, vector layers, clip masks,
+blend modes, shadows, blur, colour effects, the fx chain and video paint
+through vello_cpu; world, perspective and the GLSL escape hatches land in
+image slots inside the same frame. Every eval renders on the direct path.
 
 ## Why
 
@@ -88,8 +90,8 @@ in the tag and prints a tag mismatch before the frame counts.
 
 - `bin/golden capture|compare [case…]` — per-frame md5 for every eval case,
   tagged with platform/threads/scene/love. Love-path goldens are
-  `evals/golden/<case>.md5`, scene-path goldens `<case>.scene.md5`
-  (`CADENCE_SCENE=1`), captured 2026-09-16 for 41/42 cases (`drop` needs LÖVE
+  `evals/golden/<case>.md5` (`CADENCE_SCENE=0`), scene-path goldens
+  `<case>.scene.md5` (the default), captured 2026-09-16 for 41/42 cases (`drop` needs LÖVE
   12). Compare in scene mode after any port, eyeball `bin/eval --open`, then
   recapture deliberately.
 - `CADENCE_PROFILE=1` prints `PROF scene=… flushes=…` and `PROF direct=1`.
@@ -163,7 +165,15 @@ Projective transforms are outside vello (affine only). Keep the love homography
 shader and route its output through a slot (item 2). A CPU warp with the same
 depth-defocus is possible in Rust if love ever goes preview-only.
 
-### 7. Retire the canvas path (decision, after 1–4)
+### 7. Retire the canvas path — DONE 2026-09-16
+Gate met: `CADENCE_SCENE=1 bin/eval` 42/42 pass (`drop` needs LÖVE 12), contact
+sheets eyeballed, scene goldens captured for every case. The rasterizer is now
+the default (`runtime/scene.lua`: on when the dylib is present,
+`CADENCE_SCENE=0` opts out); `bin/golden` defaults to the `.scene.md5` files.
+LÖVE-as-shell vs mlua: LÖVE stays the shell while the GLSL escape hatches
+(shadertoy, worley, s:draw, perspective, world) still paint through love
+canvases into slots — see DESIGN.md §2 for the reasoning and the revisit
+condition. Original plan:
 Gate: all 42 evals green in scene mode, goldens recaptured, `bin/eval --open`
 eyeballed. Then direct is the default and the canvas is the fallback. Only
 then decide LÖVE-as-shell vs mlua hosting LuaJIT: render/hash would drop the

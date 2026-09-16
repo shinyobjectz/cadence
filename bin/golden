@@ -9,15 +9,16 @@ cd "$ROOT"
 mode="${1:-compare}"; shift || true
 if [ $# -gt 0 ]; then cases="$*"; else
   cases=$(python3 -c "import json;print(' '.join(c['id'] for c in json.load(open('evals/manifest.json'))['cases']))"); fi
-# love-path hashes depend on the LÖVE build (fonts, physics API); scene-path hashes
-# only on the cadence-scene build + thread count. Scene goldens live in <case>.scene.md5.
+# Scene path (default) goldens: <case>.scene.md5, scoped by cadence-scene build + thread
+# count. Love path (CADENCE_SCENE=0) goldens: <case>.md5, scoped by the LÖVE build too.
 lovebin="${LOVE_BIN:-}"
 if [ -z "$lovebin" ]; then for c in "$ROOT/build/ellua-love-macos-mega/love/ellua-love" \
   "$ROOT/vendor/love12.app/Contents/MacOS/love" love /Applications/love.app/Contents/MacOS/love; do
   if command -v "$c" >/dev/null 2>&1; then lovebin="$c"; break; fi; done; fi
 lovev=$("${lovebin:-love}" --version 2>/dev/null | grep -oE 'LOVE [0-9.]+' | head -1 | tr ' ' '-')
-tag="$(uname -sm | tr ' ' '-')|threads=${CADENCE_SCENE_THREADS:-0}|scene=${CADENCE_SCENE:-0}|love=${lovev:-unknown}"
-suffix=""; [ "${CADENCE_SCENE:-0}" = 1 ] && suffix=".scene"
+mode="${CADENCE_SCENE:-1}"
+tag="$(uname -sm | tr ' ' '-')|threads=${CADENCE_SCENE_THREADS:-0}|scene=$mode|love=${lovev:-unknown}"
+suffix=".scene"; [ "$mode" = 0 ] && suffix=""
 fail=0
 for c in $cases; do
   f="evals/cases/$c.lua"; out="evals/golden/$c$suffix.md5"

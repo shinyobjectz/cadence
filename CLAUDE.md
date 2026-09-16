@@ -9,10 +9,10 @@ change them only with a written reason there.
 ```bash
 bin/build-native                  # cargo build --release + stage dylibs into native/release/
 bin/cadence doctor                # love, ffmpeg, ffprobe, wasmoon, project layout
-bin/cadence render comps/x.lua -o out.mp4
-CADENCE_SCENE=1 bin/cadence render …   # vello_cpu rasterizer (docs/SCENE.md)
+bin/cadence render comps/x.lua -o out.mp4   # cadence-scene rasterizer (default, docs/SCENE.md)
+CADENCE_SCENE=0 bin/cadence render …        # love canvas path (fallback)
 bin/cadence lint|check|verify comps/x.lua --json
-bin/golden capture|compare [case…]     # per-frame md5 for evals/cases (evals/golden/)
+bin/golden capture|compare [case…]     # per-frame md5 (evals/golden/<case>.scene.md5; =0 → <case>.md5)
 bin/eval --open                        # render the public eval suite to evals/out/eval.html
 CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timings
 ```
@@ -24,9 +24,11 @@ CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timin
 - `runtime/` — LÖVE offline host. `painter.lua` walks the evaluated tree;
   `scene.lua` streams scene-owned nodes to the Rust rasterizer; `main.lua`
   owns the frame loop, ffmpeg pipe and the no-readback direct path.
-- `scene/` — `cadence-scene` (vello_cpu + parley). One rasterizer for text,
-  shapes, images, html, vector, masks, blends, shadows, blur. Opcodes at the top
-  of `scene/src/lib.rs`. Coverage and gaps: `docs/SCENE.md`.
+- `scene/` — `cadence-scene` (vello_cpu + parley), the default renderer. One
+  rasterizer for text, shapes, images, html, vector, masks, blends, shadows,
+  effects, the fx chain and video; world, perspective and GLSL escape hatches
+  land in image slots. Opcodes at the top of `scene/src/lib.rs`. Coverage:
+  `docs/SCENE.md`.
 - `decode/ html/ layout/ vector/ effects/ scene3d/` — native helpers over a
   C ABI, loaded by LuaJIT FFI. `vendor/ellua-love` — pinned LÖVE fork.
 - `evals/cases/` — public visual suite; `evals/golden/` — hashes per case.
@@ -38,5 +40,6 @@ CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timin
 - Every renderer change: capture goldens before, compare after, eyeball
   `bin/eval --open`, then recapture deliberately.
 - Determinism is scoped to platform + `CADENCE_SCENE_THREADS`; do not compare
-  hashes across thread counts.
+  hashes across thread counts. Love-path (`CADENCE_SCENE=0`) hashes also depend
+  on the LÖVE build: the checked-in `<case>.md5` need the vendored LÖVE 12 fork.
 - Use non-interactive flags (`cp -f`, `rm -rf`, `ssh -o BatchMode=yes`).

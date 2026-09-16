@@ -97,8 +97,8 @@ defaults `comp.duration - from`, `media_start` defaults 0. For `lottie`:
   a TTF/OTF (default NotoSans). `wrap` = column width px, `leading` = line
   height multiple, `reveal` 0..1 types on, `{c:#hex}{b}{i}` tags colour/style
   runs, `outline`/`weight`/`outline_color` for stroked type. `tracking` =
-  letter-spacing px, animatable (needs the cadence-scene renderer,
-  `CADENCE_SCENE=1`; the love path ignores it). Center anchor measures the
+  letter-spacing px, animatable (cadence-scene renderer, the default; the
+  `CADENCE_SCENE=0` love path ignores it). Center anchor measures the
   *current* string with the *current* size and tracking.
 - **video** — `src` local path or `http(s)://` URL (URL is curl-downloaded to
   `~/.cache/ellua/dl/` at resolve, content-addressed). Active window is

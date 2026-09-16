@@ -98,12 +98,13 @@ return e.comp {
 
 ## Renderer
 
-`CADENCE_SCENE=1` paints the frame through `cadence-scene` (vello_cpu + parley):
-one rasterizer for text, shapes, images, html, vector, masks, blends and
-shadows, with no GPU readback when a comp is fully scene-owned. Kinds not ported
-yet fall back to love per node. Details, coverage and measurements:
-[docs/SCENE.md](docs/SCENE.md). `bin/golden capture|compare` holds per-frame
-hashes across renderer changes.
+Frames are painted by `cadence-scene` (vello_cpu + parley): one rasterizer for
+text, shapes, images, html, vector, masks, blends, shadows, colour effects, the
+fx chain and video, with no GPU readback. World (wgpu), perspective and the
+GLSL escape hatches (`shadertoy`, `worley`, `s:draw`) render through love into
+image slots inside the same frame. `CADENCE_SCENE=0` selects the old love
+canvas path. Details, coverage and measurements: [docs/SCENE.md](docs/SCENE.md).
+`bin/golden capture|compare` holds per-frame hashes across renderer changes.
 
 ## Layout
 

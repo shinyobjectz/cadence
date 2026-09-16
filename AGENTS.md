@@ -6,7 +6,9 @@ Read `CLAUDE.md` for build, test and architecture. Follow-up work is tracked in
 ## Session completion
 
 1. Run the gates: `cargo build --release` + `bin/build-native`, then
-   `bin/golden compare` (love path) and `CADENCE_SCENE=1 bin/golden compare`.
+   `bin/golden compare` (scene path, the default) and `bin/lint-tests`.
+   `CADENCE_SCENE=0 bin/golden compare` checks the love fallback and needs the
+   vendored LÖVE 12 fork to match (Homebrew 11.5 differs on fonts).
 2. Commit, `git pull --rebase`, `git push`, `git status` must be up to date.
 3. Leave a hand-off note in the commit body: what changed, what is left.
 
