@@ -491,8 +491,7 @@ scene_vector = function(node, opacity, chain, t)
   i.draw(scene_builder, t, node)
   scene_builder.grain_box = nil
   scene_builder:clip_pop()
-  -- node opacity: vector draws carry their own alpha; fold opacity via a layer
-  -- is not available per-command, so opacity < 1 falls back to love (scene_owns)
+  -- node opacity < 1 is applied by scene_node as an opacity layer around this call
 end
 
 local function scene_html(node, opacity, chain)

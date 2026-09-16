@@ -93,9 +93,13 @@ defaults `comp.duration - from`, `media_start` defaults 0. For `lottie`:
   painted backplate, not an offscreen subtree renderer; effects and masks apply
   to individual child nodes.
 - **circle** — radius `r`; animatable.
-- **text** — `size` is font px (default 32 if unset at draw); single line via
-  `love.graphics.print`; no wrap, no font selection (default LÖVE font in v0).
-  Center anchor measures the *current* string with the *current* size.
+- **text** — `size` is font px (default 32 if unset at draw). `font` = path to
+  a TTF/OTF (default NotoSans). `wrap` = column width px, `leading` = line
+  height multiple, `reveal` 0..1 types on, `{c:#hex}{b}{i}` tags colour/style
+  runs, `outline`/`weight`/`outline_color` for stroked type. `tracking` =
+  letter-spacing px, animatable (needs the cadence-scene renderer,
+  `CADENCE_SCENE=1`; the love path ignores it). Center anchor measures the
+  *current* string with the *current* size and tracking.
 - **video** — `src` local path or `http(s)://` URL (URL is curl-downloaded to
   `~/.cache/ellua/dl/` at resolve, content-addressed). Active window is
   `[from, from + duration)` in comp time; frame shown at comp-time t is source

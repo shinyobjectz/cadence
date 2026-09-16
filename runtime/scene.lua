@@ -137,7 +137,6 @@ function Builder:clip_push(x, y, w, h, rx) push(self, 104, x, y, w, h, rx or 0) 
 function Builder:clip_pop() push(self, 105) end
 function Builder:pop() push(self, 105) end
 local BLEND = { alpha = { 0, 0 }, multiply = { 1, 0 }, screen = { 2, 0 }, darken = { 4, 0 }, lighten = { 5, 0 }, add = { 0, 1 } }
-S.BLEND = BLEND
 function Builder:blend_push(mode) local b = BLEND[mode] or BLEND.alpha; push(self, 107, b[1], b[2]) end
 local FILTER = { effect_blur = 0, effect_brightness = 1, effect_contrast = 2, effect_saturate = 3, effect_grayscale = 4,
   effect_sepia = 5, effect_invert = 6, effect_opacity = 7, effect_hue_rotate = 8 }
