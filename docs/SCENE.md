@@ -62,8 +62,8 @@ lib/cadence  (pure Lua)  ──evaluate(t)──▶  runtime/painter.lua
 | blend | ✅ | alpha multiply screen darken lighten add; subtract/replace fall back |
 | shadow | ✅ | blur layer over a rounded rect |
 | effect_blur / effect_opacity | ✅ | |
-| brightness contrast saturate grayscale sepia invert hue | ⏳ love | vello_cpu 0.2 ships only blur/drop-shadow/flood/offset filters; add a colour-matrix pass in `scene/` |
-| video | ⏳ love | `cs_image_update` exists; wire the decode frame into a slot |
+| brightness contrast saturate grayscale sepia invert hue | ✅ | opcode 111 `fx_push`: the node renders into a scratch context sized to its transformed box, `ellua-effects::apply` (rlib) runs the same maths as the love shader, composited back as an image. `effects` eval vs love: mean 1.3–2.0/255, max 8 outside glyphs (glyph diffs are the font stack, see Determinism) |
+| video | ✅ | yuv420 → `ed_yuv420_to_rgba` (fixed-point BT.709, row-parallel) → slot (opaque, no premultiply); rgba/jpg frames → slot. Image opacity goes through an opacity layer because vello_cpu 0.2 panics on sampler alpha ≠ 1 (`unimplemented!` in vello_common encode) |
 | fx (shader chain), perspective, world/mesh/camera/light, lottie, spritesheet, spine, chart, ornament, particles, draw | ⏳ love | fx is Moonshine/Shadertoy GLSL — port means CPU reimplementation; `s:draw` stays love by contract |
 
 ## Determinism
@@ -73,12 +73,22 @@ thread counts differ by ±1 in ~0.03% of bytes, so goldens are scoped by
 `CADENCE_SCENE_THREADS` (default 0 = single). Any filter layer in a frame pins
 that frame to single-threaded rendering (vello_cpu constraint).
 
+Love-path hashes additionally depend on the LÖVE build: the checked-in
+`<case>.md5` goldens were captured on the vendored LÖVE 12 fork (NotoSans).
+Homebrew LÖVE 11.5 draws Vera, so every text-bearing love case differs there
+and `drop` fails (`newRectangleShape(body, …)` is the 12 API). Scene-owned
+comps bundle NotoSans and hash the same under either LÖVE — that is the
+portability argument for the direction. `bin/golden` records the love version
+in the tag and prints a tag mismatch before the frame counts.
+
 ## Tools
 
 - `bin/golden capture|compare [case…]` — per-frame md5 for every eval case,
-  tagged with platform/threads/scene. Goldens in `evals/golden/` were captured
-  from the love path; compare in scene mode to see what a port changed, then
-  eyeball `bin/eval --open` before recapturing.
+  tagged with platform/threads/scene/love. Love-path goldens are
+  `evals/golden/<case>.md5`, scene-path goldens `<case>.scene.md5`
+  (`CADENCE_SCENE=1`), captured 2026-09-16 for 41/42 cases (`drop` needs LÖVE
+  12). Compare in scene mode after any port, eyeball `bin/eval --open`, then
+  recapture deliberately.
 - `CADENCE_PROFILE=1` prints `PROF scene=… flushes=…` and `PROF direct=1`.
 
 ## Plan for the remaining gaps (2026-09-16)
@@ -105,7 +115,10 @@ one rasterizer with correct z-order and no per-node flush. Proof: `world3d` and
 `fx` evals render on the direct path (`PROF direct=1`) and match their goldens
 within antialiasing.
 
-### 3. Colour effects (half day)
+### 3. Colour effects — DONE 2026-09-16
+Landed as opcode 111 (see Coverage). The scratch context is the node's
+transformed box, not the frame, so blur edges match love; per-pixel maths is
+the `effects` crate as an rlib. Original plan:
 vello_cpu 0.2 has blur/drop-shadow/flood/offset only. Add opcode `111
 colour_push kind amount … 105 pop`: render the enclosed commands into a scratch
 `Pixmap`, run the per-pixel maths that `effects/` already has (make it an rlib
@@ -114,7 +127,13 @@ contrast, saturate, grayscale, sepia, invert, hue-rotate, and gives tonemap,
 posterize, pixelate a home. Proof: `effects` eval hash-stable in scene mode,
 side-by-side with love within ±2/255 per channel.
 
-### 4. Video frames into slots (half day)
+### 4. Video frames into slots — DONE 2026-09-16
+`video` and `video_layers` render on the direct path and match love visually.
+Per-frame draw in scene mode is 5.6 ms / 7.0 ms vs love's 1.8 + 1.4 readback /
+2.6 + 1.4: the CPU YUV→RGBA (row-parallel) plus the slot copy cost more than
+love's GPU yuv shader. Next win if it matters: hand the Y/U/V planes to
+`cs_image_update` and convert straight into the premultiplied Pixmap (one copy
+fewer). Original plan:
 `painter.lua` video branch: the jpg-frames and rgba paths call
 `scene.image_slot(node, imagedata, changed)` per frame; the yuv path goes
 through `ed_frame_rgba` (the one pinned YUV→RGB path, DESIGN §4). Add an

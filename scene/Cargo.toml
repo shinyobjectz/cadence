@@ -10,5 +10,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 vello_cpu = { version = "0.2", features = ["multithreading"] }
 vello_common = "0.2"
+ellua-effects = { path = "../effects" }
 glifo = "0.3"
 parley = { version = "0.11", default-features = false, features = ["std"] }

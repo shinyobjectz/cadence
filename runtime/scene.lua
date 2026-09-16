@@ -143,6 +143,12 @@ local FILTER = { effect_blur = 0, effect_brightness = 1, effect_contrast = 2, ef
 S.FILTER = FILTER
 function Builder:filter_push(kind, amount) push(self, 108, kind, amount) end
 function Builder:opacity_push(a) push(self, 110, a) end
+-- the ellua-effects chain (love parity): blur brightness contrast saturate grayscale sepia invert opacity hue
+-- box = { x, y, w, h } in the current transform space: the effect runs on that box only
+function Builder:fx_push(blur, brightness, contrast, saturate, grayscale, sepia, invert, opacity, hue, box)
+  push(self, 111, blur or 0, brightness or 1, contrast or 1, saturate or 1, grayscale or 0, sepia or 0, invert or 0, opacity or 1, hue or 0,
+    box[1], box[2], box[3], box[4])
+end
 -- vector-node builder surface (same verbs as runtime/vector.lua)
 function Builder:move(x, y) push(self, 3, x, y) end
 function Builder:line(x, y) push(self, 4, x, y) end

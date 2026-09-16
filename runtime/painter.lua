@@ -378,7 +378,7 @@ end
 
 -- which nodes the scene crate paints today (grows one kind at a time)
 local SCENE_KINDS = { text = true, rect = true, circle = true, flex = true, group = true, kinetic = true,
-  image = true, svg = true, page = true, vector = true, html = true, world = true, fx = true }
+  image = true, svg = true, page = true, vector = true, html = true, world = true, fx = true, video = true }
 local EFFECT_DEFAULTS = { effect_blur = 0, effect_brightness = 1, effect_contrast = 1, effect_saturate = 1,
   effect_grayscale = 0, effect_sepia = 0, effect_invert = 0, effect_opacity = 1, effect_hue_rotate = 0 }
 local SCENE_BLENDS = { alpha = true, multiply = true, screen = true, darken = true, lighten = true, add = true }
@@ -388,14 +388,6 @@ local function scene_owns(node)
   if i.perspective then return false end
   if i.clip_node and i.clip_invert then return false end
   if i.blend and not SCENE_BLENDS[i.blend] then return false end
-  -- vello_cpu 0.2 implements only blur/drop-shadow/flood/offset filters; colour
-  -- effects (brightness, saturate, hue…) stay on the love path per node.
-  for key, default in pairs(EFFECT_DEFAULTS) do
-    if key ~= "effect_blur" and key ~= "effect_opacity" then
-      local v = node:get(key)
-      if v ~= nil and v ~= default then return false end
-    end
-  end
   return true
 end
 P.scene_owns = scene_owns
@@ -446,6 +438,63 @@ scene_vector = function(node, opacity, chain, t)
   -- node opacity < 1 is applied by scene_node as an opacity layer around this call
 end
 
+local function comp_render_fps(node) return P.render_fps or 30 end
+local function scene_video(node, opacity, chain, t)
+  local i = node.initial
+  local rel = t - i.from
+  if rel < 0 or rel >= i.duration then return true end
+  local w, h = i.w, i.h
+  local ox, oy = anchor_offset(node, w, h)
+  local id
+  if node.dec then
+    local d = node.dec
+    local decode = require("decode")
+    if not node.vrgba then node.vrgba = love.image.newImageData(w, h, "rgba8") end
+    if d.mode == "yuv" then
+      if not node.ydata then
+        node.ydata = love.image.newImageData(d.w, d.h, "r8")
+        node.udata = love.image.newImageData(d.w / 2, d.h / 2, "r8")
+        node.vdata = love.image.newImageData(d.w / 2, d.h / 2, "r8")
+        node.vfull = love.image.newImageData(d.w, d.h, "rgba8")
+      end
+      decode.frame_yuv(d, i.media_start + rel,
+        node.ydata:getFFIPointer(), node.ydata:getSize(),
+        node.udata:getFFIPointer(), node.udata:getSize(),
+        node.vdata:getFFIPointer(), node.vdata:getSize())
+      decode.yuv_to_rgba(node.ydata:getFFIPointer(), node.udata:getFFIPointer(), node.vdata:getFFIPointer(),
+        d.w, d.h, d.full_range, node.vfull:getFFIPointer(), node.vfull:getSize())
+      -- cover-crop the decoded frame into the node box (same rule as the GPU quad)
+      local sc = math.max(w / d.w, h / d.h)
+      local cw, ch = w / sc, h / sc
+      local sx, sy = math.floor((d.w - cw) / 2), math.floor((d.h - ch) / 2)
+      id = scene.image_slot(node, node.vfull, true, true)
+      scene_builder:transform(node_affine(chain, node))
+      scene_builder:clip_push(ox, oy, w, h, node:get("rx") or 0)
+      scene_builder:image(id, ox - sx * sc, oy - sy * sc, d.w * sc, d.h * sc, 0, opacity)
+      scene_builder:clip_pop()
+      return true
+    else
+      decode.frame_rgba(d, i.media_start + rel, node.vrgba:getFFIPointer(), node.vrgba:getSize())
+      id = scene.image_slot(node, node.vrgba, true, false)
+    end
+  elseif node.frame_count and node.frame_count > 0 then
+    local idx = math.min(math.floor(rel * comp_render_fps(node) ) + 1, node.frame_count)
+    local path = ("%s/%05d.jpg"):format(node.frames_dir, idx)
+    if node.vpath ~= path then
+      local f = assert(_ELLUA_IOOPEN(path, "rb"), "ellua: cannot read " .. path)
+      local bytes = f:read("*a"); f:close()
+      node.vframe = love.image.newImageData(love.filesystem.newFileData(bytes, "f.jpg"))
+      node.vpath = path
+    end
+    id = scene.image_slot(node, node.vframe, true, false)
+  else
+    return true
+  end
+  scene_builder:transform(node_affine(chain, node))
+  scene_builder:image(id, ox, oy, w, h, node:get("rx") or 0, opacity)
+  return true
+end
+
 local function scene_html(node, opacity, chain)
   local html = require("html")
   if not html.available then return false end
@@ -468,6 +517,20 @@ local function scene_html(node, opacity, chain)
   scene_builder:transform(node_affine(chain, node))
   scene_builder:image(id, ox, oy, i.w, i.h, 0, opacity)
   return true
+end
+
+-- node-local box {x, y, w, h} (anchor applied) for effect bounds
+local function node_box(node)
+  local i = node.initial
+  if node.kind == "circle" then local r = node:get("r") or 0; return { -r, -r, 2 * r, 2 * r } end
+  local w, h = node:get("w") or i.w or 0, node:get("h") or i.h or 0
+  if node.kind == "text" then
+    local size = node:get("size") or 32
+    w, h = scene.measure(scene.font_id(node:get("font")), size, (node:get("text") or i.text or ""):gsub("{[^}]*}", ""),
+      node:get("tracking") or 0, i.wrap or 0, i.leading or 0)
+  end
+  local ox, oy = anchor_offset(node, w, h)
+  return { ox, oy, w, h }
 end
 
 -- one scene-owned node: clip / blend / shadow / effect layers around its paint
@@ -496,12 +559,17 @@ local function scene_node(node, opacity, chain, t)
       scene_builder:pop()
     end
   end
+  local has_fx = false
   for key, default in pairs(EFFECT_DEFAULTS) do
     local v = node:get(key)
-    if v ~= nil and v ~= default then
-      if key == "effect_opacity" then scene_builder:opacity_push(v) else scene_builder:filter_push(scene.FILTER[key], v) end
-      pops = pops + 1
-    end
+    if v ~= nil and v ~= default then has_fx = true end
+  end
+  if has_fx then
+    local function e(k) local v = node:get(k); if v == nil then v = EFFECT_DEFAULTS[k] end; return v end
+    scene_builder:transform(node_affine(chain, node))
+    scene_builder:fx_push(e("effect_blur"), e("effect_brightness"), e("effect_contrast"), e("effect_saturate"),
+      e("effect_grayscale"), e("effect_sepia"), e("effect_invert"), e("effect_opacity"), e("effect_hue_rotate"), node_box(node))
+    pops = pops + 1
   end
   if node.kind == "vector" and opacity < 1 then scene_builder:opacity_push(opacity); pops = pops + 1 end
   local k = node.kind
@@ -512,6 +580,7 @@ local function scene_node(node, opacity, chain, t)
   elseif k == "image" or k == "svg" or k == "page" then scene_image(node, opacity, chain)
   elseif k == "vector" then scene_vector(node, opacity, chain, t)
   elseif k == "html" then ok = scene_html(node, opacity, chain)
+  elseif k == "video" then ok = scene_video(node, opacity, chain, t)
   else ok = false end
   for _ = 1, pops do scene_builder:pop() end
   return ok
@@ -1221,6 +1290,7 @@ end
 -- evaluated straight into an ImageData. No canvas, no GPU readback.
 local direct_data
 function P.scene_direct(comp, t)
+  P.render_fps = comp.render_fps or comp.fps
   local w, h = comp.width, comp.height
   if not direct_data then direct_data = love.image.newImageData(w, h, "rgba8") end
   scene_builder:reset()
@@ -1239,6 +1309,7 @@ function P.scene_direct(comp, t)
 end
 
 function P.draw_scene(comp, t)
+  P.render_fps = comp.render_fps or comp.fps
   local g = love.graphics
   g.clear(comp.background[1], comp.background[2], comp.background[3], 1)
   local order = {}

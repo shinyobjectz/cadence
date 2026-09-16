@@ -383,3 +383,43 @@ pub extern "C" fn ed_close(handle: i64) {
         with_reg(|r| r.remove(&handle));
     }));
 }
+
+/// The one pinned YUV420 -> RGBA8 path (BT.709, integer maths, opaque alpha).
+/// Used by the scene renderer for yuv-mode streams; hash-exact across machines.
+#[no_mangle]
+pub extern "C" fn ed_yuv420_to_rgba(
+    y: *const u8, u: *const u8, v: *const u8, w: c_int, h: c_int, full_range: c_int,
+    out: *mut u8, out_len: usize,
+) -> c_int {
+    let (w, h) = (w.max(0) as usize, h.max(0) as usize);
+    if out_len < w * h * 4 || w == 0 || h == 0 { return -1; }
+    let cw = (w + 1) / 2;
+    let yp = unsafe { std::slice::from_raw_parts(y, w * h) };
+    let up = unsafe { std::slice::from_raw_parts(u, cw * ((h + 1) / 2)) };
+    let vp = unsafe { std::slice::from_raw_parts(v, cw * ((h + 1) / 2)) };
+    let o = unsafe { std::slice::from_raw_parts_mut(out, w * h * 4) };
+    let full = full_range != 0;
+    use rayon::prelude::*;
+    o.par_chunks_mut(w * 4).enumerate().for_each(|(j, row)| {
+        for i in 0..w {
+            let yy = yp[j * w + i] as i32;
+            let uu = up[(j / 2) * cw + i / 2] as i32 - 128;
+            let vv = vp[(j / 2) * cw + i / 2] as i32 - 128;
+            // fixed point 16.16, BT.709
+            let (c, kr, kg1, kg2, kb) = if full {
+                (yy << 16, 103_206, 12_276, 30_679, 121_608)      // 1.5748, 0.1873, 0.4681, 1.8556
+            } else {
+                ((yy - 16) * 76_309, 117_489, 13_975, 34_925, 138_438) // 1.1644 * (…)
+            };
+            let r = (c + kr * vv + 32_768) >> 16;
+            let g = (c - kg1 * uu - kg2 * vv + 32_768) >> 16;
+            let b = (c + kb * uu + 32_768) >> 16;
+            let k = i * 4;
+            row[k] = r.clamp(0, 255) as u8;
+            row[k + 1] = g.clamp(0, 255) as u8;
+            row[k + 2] = b.clamp(0, 255) as u8;
+            row[k + 3] = 255;
+        }
+    });
+    0
+}

@@ -5,4 +5,4 @@ edition = "2021"
 
 [lib]
 name = "ellua_effects"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]

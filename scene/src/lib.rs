@@ -17,6 +17,11 @@
 //   107 blend_push mix compose              blend layer until 105 (mix: 0 normal 1 multiply 2 screen 4 darken 5 lighten; compose: 0 srcover 1 plus)
 //   108 filter_push kind amount             CSS filter layer until 105 (0 blur 1 brightness 2 contrast 3 saturate 4 grayscale 5 sepia 6 invert 7 opacity 8 hue)
 //   110 opacity_push a                      group opacity layer until 105
+//   111 fx_push blur bright contrast sat gray sepia invert opacity hue  bx by bw bh
+//                                          render until 105 into a scratch frame the size of the
+//                                          node box (transformed by the current affine), run
+//                                          ellua-effects on it, composite back. Edge clamping
+//                                          therefore matches love's per-node buffers.
 //   101 text       font size x y ls wrap leading align outline_w  or og ob oa  embolden  nruns
 //                  then nruns × (str_off str_len r g b a bold italic)
 //                  (x,y) = top-left of the line box, like love.graphics.print
@@ -279,7 +284,7 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
         while let Some(op) = r.next() {
             let n = match op as u32 { 0 => 8, 1 => 9, 2 => 7, 3 | 4 => 2, 5 => 6, 6 => 4, 7 => 5, 8 => 16, 9 => 11, 10 => 2,
                 100 => 6, 101 => { let hdr = r.take::<15>(); match hdr { Some(h) => (h[14] as usize) * 8, None => 0 } }, 102 => 4, 103 => 7, 104 => 5, 105 => 0,
-                106 => 6, 107 => 2, 108 => { found = true; 2 }, 110 => 1, _ => 0 };
+                106 => 6, 107 => 2, 108 => { found = true; 2 }, 110 => 1, 111 => 13, _ => 0 };
             r.i += n;
         }
         found
@@ -298,6 +303,17 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
     }
     let mut ctx = st.ctx.take().unwrap().3;
     ctx.reset();
+    let settings = RenderSettings {
+        level: Level::try_detect().unwrap_or(Level::baseline()),
+        num_threads: threads,
+    };
+    // scratch contexts for 111 fx_push; `layers` says whether a 105 pops a
+    // vello layer (false) or closes a scratch frame (true)
+    let mut subs: Vec<RenderContext> = Vec::new();
+    let mut fx_params: Vec<([f32; 9], (i32, i32, u16, u16))> = Vec::new();
+    let mut offs: Vec<Affine> = Vec::new(); // scratch-frame offsets, parallel to `subs`
+    let mut layers: Vec<bool> = Vec::new();
+    let mut temp_images: Vec<ImageId> = Vec::new();
     let mut base = Affine::IDENTITY;
     let mut path = BezPath::new();
     let mut grain: Option<(f32, u32)> = None;
@@ -309,22 +325,24 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
     };
     let ok = (|| -> Option<()> {
         while let Some(op) = rd.next() {
+            let top: &mut RenderContext = if let Some(s) = subs.last_mut() { s } else { &mut ctx };
+            let off = offs.last().copied().unwrap_or(Affine::IDENTITY);
             match op as u32 {
                 0 => {
                     let [x, y, rw, rh, r, g, b, a] = rd.take::<8>()?;
-                    ctx.set_paint(color(r, g, b, a));
-                    ctx.fill_rect(&Rect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64));
+                    top.set_paint(color(r, g, b, a));
+                    top.fill_rect(&Rect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64));
                 }
                 1 => {
                     let [x, y, rw, rh, rad, r, g, b, a] = rd.take::<9>()?;
-                    ctx.set_paint(color(r, g, b, a));
+                    top.set_paint(color(r, g, b, a));
                     let rr = RoundedRect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64, rad as f64);
-                    ctx.fill_path(&rr.to_path(0.1));
+                    top.fill_path(&rr.to_path(0.1));
                 }
                 2 => {
                     let [cx, cy, rad, r, g, b, a] = rd.take::<7>()?;
-                    ctx.set_paint(color(r, g, b, a));
-                    ctx.fill_path(&Circle::new(Point::new(cx as f64, cy as f64), rad as f64).to_path(0.1));
+                    top.set_paint(color(r, g, b, a));
+                    top.fill_path(&Circle::new(Point::new(cx as f64, cy as f64), rad as f64).to_path(0.1));
                 }
                 3 => {
                     let [x, y] = rd.take::<2>()?;
@@ -341,15 +359,15 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                 6 => {
                     let [r, g, b, a] = rd.take::<4>()?;
                     path.close_path();
-                    ctx.set_paint(color(r, g, b, a));
-                    ctx.fill_path(&path);
+                    top.set_paint(color(r, g, b, a));
+                    top.fill_path(&path);
                     path = BezPath::new();
                 }
                 7 => {
                     let [width, r, g, b, a] = rd.take::<5>()?;
-                    ctx.set_paint(color(r, g, b, a));
-                    ctx.set_stroke(Stroke::new(width as f64));
-                    ctx.stroke_path(&path);
+                    top.set_paint(color(r, g, b, a));
+                    top.set_stroke(Stroke::new(width as f64));
+                    top.stroke_path(&path);
                     path = BezPath::new();
                 }
                 8 => {
@@ -359,8 +377,8 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                         ColorStop { offset: 0.0, color: DynamicColor::from_alpha_color(color(r0, g0, b0, a0)) },
                         ColorStop { offset: 1.0, color: DynamicColor::from_alpha_color(color(r1, g1, b1, a1)) },
                     ]);
-                    ctx.set_paint(grad);
-                    ctx.fill_rect(&Rect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64));
+                    top.set_paint(grad);
+                    top.fill_rect(&Rect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64));
                 }
                 9 => {
                     let [cx, cy, rad] = rd.take::<3>()?;
@@ -369,8 +387,8 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                         ColorStop { offset: 0.0, color: DynamicColor::from_alpha_color(color(r0, g0, b0, a0)) },
                         ColorStop { offset: 1.0, color: DynamicColor::from_alpha_color(color(r1, g1, b1, a1)) },
                     ]);
-                    ctx.set_paint(grad);
-                    ctx.fill_rect(&Rect::new((cx - rad) as f64, (cy - rad) as f64, (cx + rad) as f64, (cy + rad) as f64));
+                    top.set_paint(grad);
+                    top.fill_rect(&Rect::new((cx - rad) as f64, (cy - rad) as f64, (cx + rad) as f64, (cy + rad) as f64));
                 }
                 10 => {
                     let [amount, seed] = rd.take::<2>()?;
@@ -379,24 +397,78 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                 103 => {
                     let [id, x, y, rw, rh, rx, alpha] = rd.take::<7>()?;
                     let (iid, iw, ih) = *st.images.get(id as usize)?;
+                    // vello_cpu 0.2 has no sampler alpha on images: opacity goes through a layer
                     let img: Image = ImageBrush {
                         image: ImageSource::opaque_id(iid),
-                        sampler: ImageSampler { x_extend: Extend::Pad, y_extend: Extend::Pad, quality: ImageQuality::Medium, alpha },
+                        sampler: ImageSampler { x_extend: Extend::Pad, y_extend: Extend::Pad, quality: ImageQuality::Medium, alpha: 1.0 },
                     };
-                    ctx.set_paint(PBrush::Image(img));
-                    ctx.set_paint_transform(Affine::translate((x as f64, y as f64)) * Affine::scale_non_uniform(rw as f64 / iw as f64, rh as f64 / ih as f64));
+                    let layered = alpha < 0.999;
+                    if layered { top.push_opacity_layer(alpha.max(0.0)); }
+                    top.set_paint(PBrush::Image(img));
+                    top.set_paint_transform(Affine::translate((x as f64, y as f64)) * Affine::scale_non_uniform(rw as f64 / iw as f64, rh as f64 / ih as f64));
                     let r = Rect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64);
-                    if rx > 0.0 { ctx.fill_path(&RoundedRect::from_rect(r, rx as f64).to_path(0.1)); } else { ctx.fill_rect(&r); }
-                    ctx.reset_paint_transform();
+                    if rx > 0.0 { top.fill_path(&RoundedRect::from_rect(r, rx as f64).to_path(0.1)); } else { top.fill_rect(&r); }
+                    top.reset_paint_transform();
+                    if layered { top.pop_layer(); }
                 }
                 104 => {
+                    layers.push(false);
                     let [x, y, rw, rh, rx] = rd.take::<5>()?;
                     let r = Rect::new(x as f64, y as f64, (x + rw) as f64, (y + rh) as f64);
                     let p = if rx > 0.0 { RoundedRect::from_rect(r, rx as f64).to_path(0.1) } else { r.to_path(0.1) };
-                    ctx.push_clip_layer(&p);
+                    top.push_clip_layer(&p);
                 }
                 105 => {
-                    ctx.pop_layer();
+                    if layers.pop() == Some(true) {
+                        // close the scratch frame: render, run the effect chain, composite
+                        let mut sub = subs.pop()?;
+                        offs.pop();
+                        let poff = offs.last().copied().unwrap_or(Affine::IDENTITY);
+                        let (fx, (ox, oy, sw, sh)) = fx_params.pop()?;
+                        sub.flush();
+                        let mut pm = Pixmap::new(sw, sh);
+                        sub.render(&mut pm, &mut st.res);
+                        ellua_effects::apply(pm.data_as_u8_slice_mut(), sw as usize, sh as usize,
+                            fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7], fx[8]);
+                        let id = st.res.register_image(Arc::new(pm));
+                        temp_images.push(id);
+                        let parent: &mut RenderContext = if let Some(s) = subs.last_mut() { s } else { &mut ctx };
+                        parent.set_transform(poff);
+                        parent.set_paint(PBrush::Image(ImageBrush {
+                            image: ImageSource::opaque_id(id),
+                            sampler: ImageSampler { x_extend: Extend::Pad, y_extend: Extend::Pad, quality: ImageQuality::Low, alpha: 1.0 },
+                        }));
+                        parent.set_paint_transform(Affine::translate((ox as f64, oy as f64)));
+                        parent.fill_rect(&Rect::new(ox as f64, oy as f64, (ox as i32 + sw as i32) as f64, (oy as i32 + sh as i32) as f64));
+                        parent.reset_paint_transform();
+                        parent.set_transform(poff * base);
+                    } else {
+                        top.pop_layer();
+                    }
+                }
+                111 => {
+                    let p = rd.take::<9>()?;
+                    let [bx, by, bw, bh] = rd.take::<4>()?;
+                    // frame-space bbox of the node box under the current affine
+                    let corners = [
+                        base * Point::new(bx as f64, by as f64),
+                        base * Point::new((bx + bw) as f64, by as f64),
+                        base * Point::new(bx as f64, (by + bh) as f64),
+                        base * Point::new((bx + bw) as f64, (by + bh) as f64),
+                    ];
+                    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+                    for c in corners { x0 = x0.min(c.x); y0 = y0.min(c.y); x1 = x1.max(c.x); y1 = y1.max(c.y); }
+                    let ox = x0.floor() as i32;
+                    let oy = y0.floor() as i32;
+                    let sw = ((x1.ceil() as i32) - ox).clamp(1, 16384) as u16;
+                    let sh = ((y1.ceil() as i32) - oy).clamp(1, 16384) as u16;
+                    let mut sub = RenderContext::new_with(sw, sh, settings.clone());
+                    let noff = Affine::translate((-ox as f64, -oy as f64));
+                    sub.set_transform(noff * base);
+                    subs.push(sub);
+                    offs.push(noff);
+                    fx_params.push((p, (ox, oy, sw, sh)));
+                    layers.push(true);
                 }
                 106 => {
                     let [amount, seed, x, y, rw, rh] = rd.take::<6>()?;
@@ -406,12 +478,14 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                         (p0.x.max(p1.x).min(w as f64)) as usize, (p0.y.max(p1.y).min(h as f64)) as usize));
                 }
                 107 => {
+                    layers.push(false);
                     let [mix, compose] = rd.take::<2>()?;
                     let mix = match mix as u32 { 1 => Mix::Multiply, 2 => Mix::Screen, 4 => Mix::Darken, 5 => Mix::Lighten, _ => Mix::Normal };
                     let compose = match compose as u32 { 1 => Compose::Plus, _ => Compose::SrcOver };
-                    ctx.push_blend_layer(BlendMode::new(mix, compose));
+                    top.push_blend_layer(BlendMode::new(mix, compose));
                 }
                 108 => {
+                    layers.push(false);
                     let [kind, amount] = rd.take::<2>()?;
                     let f = match kind as u32 {
                         0 => FilterFunction::Blur { radius: amount },
@@ -424,23 +498,24 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                         7 => FilterFunction::Opacity { amount },
                         _ => FilterFunction::HueRotate { angle: amount },
                     };
-                    ctx.push_layer(None, None, None, None, Some(Filter::from_function(f)));
+                    top.push_layer(None, None, None, None, Some(Filter::from_function(f)));
                 }
                 110 => {
+                    layers.push(false);
                     let [a] = rd.take::<1>()?;
-                    ctx.push_opacity_layer(a);
+                    top.push_opacity_layer(a);
                 }
                 102 => {
                     let [r, g, b, a] = rd.take::<4>()?;
-                    ctx.set_transform(Affine::IDENTITY);
-                    ctx.set_paint(color(r, g, b, a));
-                    ctx.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
-                    ctx.set_transform(base);
+                    top.set_transform(off);
+                    top.set_paint(color(r, g, b, a));
+                    top.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
+                    top.set_transform(off * base);
                 }
                 100 => {
                     let [a, b, c, d, e, f] = rd.take::<6>()?;
                     base = Affine::new([a as f64, b as f64, c as f64, d as f64, e as f64, f as f64]);
-                    ctx.set_transform(base);
+                    top.set_transform(off * base);
                 }
                 101 => {
                     let [font, size, x, y, ls, wrap, leading, align, ow] = rd.take::<9>()?;
@@ -464,6 +539,7 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
         let mut pm = Pixmap::new(w, h);
         ctx.render(&mut pm, &mut st.res);
         out.copy_from_slice(pm.data_as_u8_slice());
+        for id in temp_images.drain(..) { st.res.destroy_image(id); }
         if let Some((amount, seed)) = grain {
             grains.push((amount, seed, 0, 0, w as usize, h as usize));
         }

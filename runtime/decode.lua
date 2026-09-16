@@ -9,6 +9,7 @@ int ed_frame_yuv(int64_t handle, double t, uint8_t *y, size_t ylen,
 int ed_frame_rgba(int64_t handle, double t, uint8_t *out, size_t len);
 void ed_prefetch(int64_t handle, double t);
 void ed_close(int64_t handle);
+int ed_yuv420_to_rgba(const uint8_t *y, const uint8_t *u, const uint8_t *v, int w, int h, int full_range, uint8_t *out, size_t out_len);
 ]])
 
 local D = { available = false }
@@ -52,6 +53,12 @@ end
 function D.frame_rgba(dec, t, ptr, len)
   if lib.ed_frame_rgba(dec.handle, t, ptr, len) ~= 0 then
     error("ellua-decode: rgba frame fetch failed at t=" .. tostring(t))
+  end
+end
+
+function D.yuv_to_rgba(y, u, v, w, h, full_range, out, out_len)
+  if lib.ed_yuv420_to_rgba(y, u, v, w, h, full_range and 1 or 0, out, out_len) ~= 0 then
+    error("ellua-decode: yuv→rgba failed")
   end
 end
 

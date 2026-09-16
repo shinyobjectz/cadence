@@ -65,8 +65,9 @@ fn blur_rgba(pixels: &mut [u8], width: usize, height: usize, sigma: f32) {
     }
 }
 
+/// Premultiplied RGBA8 in place: blur then the colour chain (CSS filter order).
 #[allow(clippy::too_many_arguments)]
-fn apply(
+pub fn apply(
     pixels: &mut [u8],
     width: usize,
     height: usize,

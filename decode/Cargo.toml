@@ -8,4 +8,5 @@ name = "ellua_decode"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+rayon = "1"
 ffmpeg-the-third = "5"

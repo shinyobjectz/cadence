@@ -377,6 +377,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 name = "cadence-scene"
 version = "0.1.0"
 dependencies = [
+ "ellua-effects",
  "glifo 0.3.0",
  "parley 0.11.1",
  "vello_common 0.2.0",
@@ -844,6 +845,7 @@ name = "ellua-decode"
 version = "0.1.0"
 dependencies = [
  "ffmpeg-the-third",
+ "rayon",
 ]
 
 [[package]]

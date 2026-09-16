@@ -9,16 +9,26 @@ cd "$ROOT"
 mode="${1:-compare}"; shift || true
 if [ $# -gt 0 ]; then cases="$*"; else
   cases=$(python3 -c "import json;print(' '.join(c['id'] for c in json.load(open('evals/manifest.json'))['cases']))"); fi
-tag="$(uname -sm | tr ' ' '-')|threads=${CADENCE_SCENE_THREADS:-0}|scene=${CADENCE_SCENE:-0}"
+# love-path hashes depend on the LÖVE build (fonts, physics API); scene-path hashes
+# only on the cadence-scene build + thread count. Scene goldens live in <case>.scene.md5.
+lovebin="${LOVE_BIN:-}"
+if [ -z "$lovebin" ]; then for c in "$ROOT/build/ellua-love-macos-mega/love/ellua-love" \
+  "$ROOT/vendor/love12.app/Contents/MacOS/love" love /Applications/love.app/Contents/MacOS/love; do
+  if command -v "$c" >/dev/null 2>&1; then lovebin="$c"; break; fi; done; fi
+lovev=$("${lovebin:-love}" --version 2>/dev/null | grep -oE 'LOVE [0-9.]+' | head -1 | tr ' ' '-')
+tag="$(uname -sm | tr ' ' '-')|threads=${CADENCE_SCENE_THREADS:-0}|scene=${CADENCE_SCENE:-0}|love=${lovev:-unknown}"
+suffix=""; [ "${CADENCE_SCENE:-0}" = 1 ] && suffix=".scene"
 fail=0
 for c in $cases; do
-  f="evals/cases/$c.lua"; out="evals/golden/$c.md5"
+  f="evals/cases/$c.lua"; out="evals/golden/$c$suffix.md5"
   hashes=$(bin/cadence hash "$f" 2>/dev/null | grep '^FRAME' || true)
   if [ -z "$hashes" ]; then echo "$c: NO OUTPUT"; fail=1; continue; fi
   if [ "$mode" = capture ]; then
     { echo "# $tag"; echo "$hashes"; } > "$out"; echo "$c: captured $(echo "$hashes" | wc -l | tr -d ' ') frames"
   else
     if [ ! -f "$out" ]; then echo "$c: no golden"; continue; fi
+    gtag=$(head -1 "$out" | sed 's/^# //')
+    [ "$gtag" != "$tag" ] && echo "$c: golden tag [$gtag] != this run [$tag]"
     n=$(echo "$hashes" | wc -l | tr -d ' ')
     same=$(comm -12 <(echo "$hashes" | sort) <(grep '^FRAME' "$out" | sort) | wc -l | tr -d ' ')
     if [ "$same" = "$n" ]; then echo "$c: identical ($n)"; else echo "$c: $((n-same))/$n frames differ"; fail=1; fi
