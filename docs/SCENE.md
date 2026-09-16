@@ -66,7 +66,8 @@ lib/cadence  (pure Lua)  ──evaluate(t)──▶  runtime/painter.lua
 | video | ✅ | yuv420 → `ed_yuv420_to_rgba` (fixed-point BT.709, row-parallel) → slot (opaque, no premultiply); rgba/jpg frames → slot. Image opacity goes through an opacity layer because vello_cpu 0.2 panics on sampler alpha ≠ 1 (`unimplemented!` in vello_common encode) |
 | fx chain: bloom glow blur vignette chroma grain tonemap pixelate posterize filmgrain kawase | ✅ | opcode 112 `chain_push`: children stream into a scratch frame the size of the fx box, `scene/src/fx.rs` runs the same maths as the GLSL passes, result composites in z-order. `fx_native` eval vs love: mean 1–2/255 per pass (grain/filmgrain differ in noise pattern only; max diffs sit on circle edges where love's polygonal circles and vello's AA disagree) |
 | fx chain: worley, shadertoy | ⏳ love (escape hatch) | GLSL by contract, like `s:draw`; rendered by love into a slot, lint reports `fx_opaque` |
-| perspective, world/mesh/camera/light, lottie, spritesheet, spine, chart, ornament, particles, draw | ⏳ love | `s:draw` stays love by contract |
+| perspective (rect/surface/image/svg/page with `perspective = true`) | ✅ via slot | love's homography shader paints the node into a frame-sized canvas that lands in a slot; z-order (dolly sort) shared with the direct path. Cost: one readback per perspective node per frame (`perspective_explode`: 9.8 ms/frame vs love 0.3 + 1.8) — fine for the escape hatch it is, batch consecutive planes into one canvas if it ever matters |
+| world/mesh/camera/light, lottie, spritesheet, spine, chart, ornament, particles, draw | ⏳ love | `s:draw` stays love by contract |
 
 ## Determinism
 
@@ -155,7 +156,9 @@ GLSL and are declared an escape hatch like `s:draw` (lint marks them opaque).
 Proof: per-effect A/B against love on the `fx` eval; agents get the same
 `s:fx{}` API.
 
-### 6. Perspective surfaces (later, low)
+### 6. Perspective surfaces — DONE 2026-09-16 (slot route)
+`camera`, `perspective_focus`, `perspective_explode` render on the direct path
+and match love (mean < 0.7/255, edge AA only). Original plan:
 Projective transforms are outside vello (affine only). Keep the love homography
 shader and route its output through a slot (item 2). A CPU warp with the same
 depth-defocus is possible in Rust if love ever goes preview-only.

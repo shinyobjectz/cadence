@@ -728,10 +728,45 @@ local function apply_fx(comp, node, t)
 end
 
 
+-- perspective surfaces (item 6): projective transforms are outside vello, so the
+-- love homography shader paints the node into a frame-sized canvas that lands
+-- in a slot — one frame, z-order kept, direct path kept, one readback per node.
+local persp_canvas
+local slotting = false
+local function scene_persp_slot(comp, node, t)
+  local g = love.graphics
+  local w, h = comp.width, comp.height
+  if not persp_canvas or persp_canvas:getWidth() ~= w or persp_canvas:getHeight() ~= h then
+    persp_canvas = g.newCanvas(w, h)
+  end
+  local prev = g.getCanvas()
+  local pc, pv = g.getStencilTest()
+  g.push("all")
+  g.origin()
+  g.setStencilTest()
+  g.setCanvas({ persp_canvas, stencil = true })
+  g.clear(0, 0, 0, 0)
+  slotting = true
+  paint_node(comp, node, t)
+  slotting = false
+  g.setCanvas(prev and { prev, stencil = true } or nil)
+  g.pop()
+  if pc then g.setStencilTest(pc, pv) end
+  local data = g.readbackTexture and g.readbackTexture(persp_canvas) or persp_canvas:newImageData()
+  local id = scene.image_slot(node, data, true, true)
+  data:release()
+  scene_builder:transform({ 1, 0, 0, 1, 0, 0 })
+  scene_builder:image(id, 0, 0, w, h, 0, 1)
+end
+
 paint_node = function(comp, node, t, stop)
   local g = love.graphics
   if node.kind == "fx" and not stop then
     apply_fx(comp, node, t)
+    return
+  end
+  if scene_builder and not stop and not slotting and node.initial.perspective then
+    scene_persp_slot(comp, node, t)
     return
   end
   local opacity = node:get("opacity")
@@ -1327,9 +1362,27 @@ end
 function P.scene_direct_ok(comp)
   if not scene_builder then return false end
   for _, n in ipairs(comp.nodes) do
-    if not SKIP_DRAW[n.kind] and not scene_owns(n) then return false end
+    if not SKIP_DRAW[n.kind] and not scene_owns(n) and not n.initial.perspective then return false end
   end
   return true
+end
+
+-- Far perspective planes (smaller dolly) draw first so closer cards occlude.
+-- Non-perspective nodes keep declaration order against everything else.
+local function draw_order(comp)
+  local order = {}
+  for i, node in ipairs(comp.nodes) do
+    order[i] = { i = i, node = node }
+  end
+  table.sort(order, function(a, b)
+    local pa, pb = a.node.initial.perspective, b.node.initial.perspective
+    if pa and pb then
+      local da, db = a.node:get("dolly") or 1, b.node:get("dolly") or 1
+      if da ~= db then return da < db end
+    end
+    return a.i < b.i
+  end)
+  return order
 end
 
 -- Direct path (step 3 of the plan): every node is scene-owned, so the frame is
@@ -1341,7 +1394,8 @@ function P.scene_direct(comp, t)
   if not direct_data then direct_data = love.image.newImageData(w, h, "rgba8") end
   scene_builder:reset()
   scene_builder:clear({ comp.background[1], comp.background[2], comp.background[3], 1 })
-  for _, node in ipairs(comp.nodes) do
+  for _, e in ipairs(draw_order(comp)) do
+    local node = e.node
     if not SKIP_DRAW[node.kind] and not fx_ancestor(node) then
       paint_node(comp, node, t)
     end
@@ -1358,24 +1412,11 @@ function P.draw_scene(comp, t)
   P.render_fps = comp.render_fps or comp.fps
   local g = love.graphics
   g.clear(comp.background[1], comp.background[2], comp.background[3], 1)
-  local order = {}
-  for i, node in ipairs(comp.nodes) do
-    order[i] = { i = i, node = node }
-  end
-  -- Far perspective planes (smaller dolly) draw first so closer cards occlude.
-  -- Non-perspective nodes keep declaration order against everything else.
-  table.sort(order, function(a, b)
-    local pa, pb = a.node.initial.perspective, b.node.initial.perspective
-    if pa and pb then
-      local da, db = a.node:get("dolly") or 1, b.node:get("dolly") or 1
-      if da ~= db then return da < db end
-    end
-    return a.i < b.i
-  end)
+  local order = draw_order(comp)
   for _, e in ipairs(order) do
     local node = e.node
     if not SKIP_DRAW[node.kind] and not fx_ancestor(node) then
-      if scene_builder and not scene_owns(node) then P.scene_flush(comp) end
+      if scene_builder and not scene_owns(node) and not node.initial.perspective then P.scene_flush(comp) end
       paint_node(comp, node, t)
     end
   end
