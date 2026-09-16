@@ -1,70 +1,42 @@
-# Project Instructions for AI Agents
+# Cadence — project instructions for agents
 
-This file provides instructions and context for AI coding agents working on this project.
+Programmatic video from Lua. A composition is a pure function of time; the
+renderer seeks any frame in any order. Canon decisions live in `DESIGN.md`;
+change them only with a written reason there.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
+## Build & test
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+bin/build-native                  # cargo build --release + stage dylibs into native/release/
+bin/cadence doctor                # love, ffmpeg, ffprobe, wasmoon, project layout
+bin/cadence render comps/x.lua -o out.mp4
+CADENCE_SCENE=1 bin/cadence render …   # vello_cpu rasterizer (docs/SCENE.md)
+bin/cadence lint|check|verify comps/x.lua --json
+bin/golden capture|compare [case…]     # per-frame md5 for evals/cases (evals/golden/)
+bin/eval --open                        # render the public eval suite to evals/out/eval.html
+CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timings
 ```
 
-### Rules
+## Architecture
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- `lib/cadence/` — host-free authoring API: scene graph, recorder (overlap
+  checking), signals, `waitUntil`, lint. Never touches love or Rust.
+- `runtime/` — LÖVE offline host. `painter.lua` walks the evaluated tree;
+  `scene.lua` streams scene-owned nodes to the Rust rasterizer; `main.lua`
+  owns the frame loop, ffmpeg pipe and the no-readback direct path.
+- `scene/` — `cadence-scene` (vello_cpu + parley). One rasterizer for text,
+  shapes, images, html, vector, masks, blends, shadows, blur. Opcodes at the top
+  of `scene/src/lib.rs`. Coverage and gaps: `docs/SCENE.md`.
+- `decode/ html/ layout/ vector/ effects/ scene3d/` — native helpers over a
+  C ABI, loaded by LuaJIT FFI. `vendor/ellua-love` — pinned LÖVE fork.
+- `evals/cases/` — public visual suite; `evals/golden/` — hashes per case.
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+## Conventions
 
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
-
-
-## Build & Test
-
-_Add your build and test commands here_
-
-```bash
-# Example:
-# npm install
-# npm test
-```
-
-## Architecture Overview
-
-_Add a brief overview of your project architecture_
-
-## Conventions & Patterns
-
-_Add your project-specific conventions here_
+- Comps are pure `f(t)`: no clocks, no I/O, seeded RNG. All fetching happens in
+  the resolve phase (`runtime/resolve.lua`).
+- Every renderer change: capture goldens before, compare after, eyeball
+  `bin/eval --open`, then recapture deliberately.
+- Determinism is scoped to platform + `CADENCE_SCENE_THREADS`; do not compare
+  hashes across thread counts.
+- Use non-interactive flags (`cp -f`, `rm -rf`, `ssh -o BatchMode=yes`).

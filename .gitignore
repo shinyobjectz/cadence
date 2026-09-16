@@ -38,7 +38,5 @@ examples/assets/el_demos/
 examples/assets/el_ref/
 examples/assets/ab6ix_breathe.f137.mp4.part
 
-# Beads / Dolt files (added by bd init)
 .dolt/
 *.db
-.beads-credential-key

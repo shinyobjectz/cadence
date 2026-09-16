@@ -81,13 +81,62 @@ that frame to single-threaded rendering (vello_cpu constraint).
   eyeball `bin/eval --open` before recapturing.
 - `CADENCE_PROFILE=1` prints `PROF scene=… flushes=…` and `PROF direct=1`.
 
-## Next
+## Plan for the remaining gaps (2026-09-16)
 
-1. Colour-matrix filter in `scene/` (closes the effects gap; the ellua-effects
-   crate already has the per-pixel math).
-2. Video frames into image slots (yuv → rgb conversion stays in decode).
-3. Retire the love canvas path once direct mode covers the eval suite; LÖVE
-   becomes preview-only, and the mlua question becomes a packaging call.
-4. Then the quality work the rasterizer unlocks: tweenable letter-spacing,
-   gradient stops, mask paths, blur; typography lint rules (measure, leading,
-   hierarchy ratios) now that text is measurable in Rust.
+Ordered by leverage per hour. Each item names its proof so it can be closed
+without opinion.
+
+### 1. Lint blind spots (hours) — first, because they lie about every reel
+- **reveal is motion.** Add `reveal` to the amplitude calculation in
+  `lib/cadence/lint.lua`: Δreveal × visible glyph count, normalised like x/y.
+- **outlined text has contrast.** `contrast_static` uses `outline_color` when
+  `outline > 0`; fill colour alone is not what the eye sees.
+- **vector draw callbacks are measurable.** Lint already samples the timeline
+  per frame; give it a recording builder (pure Lua, same verbs as
+  `runtime/scene.lua`) and call `draw(v, t)` at each sample. The diff between
+  consecutive command streams is real motion amplitude. No FFI, host-free.
+  Proof: both `examples/vv` reels lint with zero false frozen-span findings and
+  a deliberately static vector node still trips one.
+
+### 2. 3D world and shader-fx output into scene slots (hours)
+`world` (wgpu) and `fx` (Moonshine GLSL) already produce an RGBA buffer per
+frame. Feed it to `scene.image_slot` like html does, so one frame composites in
+one rasterizer with correct z-order and no per-node flush. Proof: `world3d` and
+`fx` evals render on the direct path (`PROF direct=1`) and match their goldens
+within antialiasing.
+
+### 3. Colour effects (half day)
+vello_cpu 0.2 has blur/drop-shadow/flood/offset only. Add opcode `111
+colour_push kind amount … 105 pop`: render the enclosed commands into a scratch
+`Pixmap`, run the per-pixel maths that `effects/` already has (make it an rlib
+dependency of `scene/`), composite back as an image paint. Covers brightness,
+contrast, saturate, grayscale, sepia, invert, hue-rotate, and gives tonemap,
+posterize, pixelate a home. Proof: `effects` eval hash-stable in scene mode,
+side-by-side with love within ±2/255 per channel.
+
+### 4. Video frames into slots (half day)
+`painter.lua` video branch: the jpg-frames and rgba paths call
+`scene.image_slot(node, imagedata, changed)` per frame; the yuv path goes
+through `ed_frame_rgba` (the one pinned YUV→RGB path, DESIGN §4). Add an
+opaque fast path to `cs_image_update` (skip premultiply when alpha is 255).
+Proof: `video` and `video_layers` evals on the direct path at ≥ the love fps.
+Blocker: Wikimedia assets 429; fetch with backoff or mirror to R2.
+
+### 5. fx chain as layers (1–2 days)
+Once 3 lands, most of the chain is expressible without GLSL: bloom/glow =
+blur layer + `Plus` blend, vignette = radial gradient multiply, chroma =
+three offset copies with channel masks, grain exists. Worley and shadertoy stay
+GLSL and are declared an escape hatch like `s:draw` (lint marks them opaque).
+Proof: per-effect A/B against love on the `fx` eval; agents get the same
+`s:fx{}` API.
+
+### 6. Perspective surfaces (later, low)
+Projective transforms are outside vello (affine only). Keep the love homography
+shader and route its output through a slot (item 2). A CPU warp with the same
+depth-defocus is possible in Rust if love ever goes preview-only.
+
+### 7. Retire the canvas path (decision, after 1–4)
+Gate: all 42 evals green in scene mode, goldens recaptured, `bin/eval --open`
+eyeballed. Then direct is the default and the canvas is the fallback. Only
+then decide LÖVE-as-shell vs mlua hosting LuaJIT: render/hash would drop the
+love dependency entirely; preview keeps it.
