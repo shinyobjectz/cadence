@@ -314,6 +314,9 @@ local function parent_chain(node, stop)
   return chain
 end
 
+-- kinds that never paint (world children); hoisted so the scene block sees it
+local SKIP_DRAW = { camera = true, light = true, mesh = true }
+
 local function fx_ancestor(node)
   local p = node.initial and node.initial.parent
   while p do
@@ -346,7 +349,11 @@ local function node_affine(chain, node)
     local c, sn = math.cos(r), math.sin(r)
     m = affine_mul(m, { c * s, sn * s, -sn * s, c * s, x, y })
   end
-  for _, p in ipairs(chain) do trs(p) end
+  for _, p in ipairs(chain) do
+    trs(p)
+    local o = P.fx_offset and P.fx_offset[p]
+    if o then m = affine_mul(m, { 1, 0, 0, 1, o[1], o[2] }) end
+  end
   if node then trs(node) end
   return m
 end
@@ -623,6 +630,30 @@ scene_text = function(node, opacity, chain)
 end
 -- ----------------------------------------------------------------------------
 
+-- fx passes the rasterizer runs itself (scene/src/fx.rs); worley and shadertoy
+-- stay GLSL and go through the canvas + slot path below.
+local CHAIN_PROP = { bloom = "fx_bloom", glow = "fx_glow", blur = "fx_blur", vignette = "fx_vignette",
+  chroma = "fx_chroma", chromasep = "fx_chroma", grain = "fx_grain", tonemap = "fx_tonemap",
+  aces = "fx_tonemap", pixelate = "fx_pixelate", posterize = "fx_posterize", filmgrain = "fx_grain",
+  kawase = "fx_blur" }
+local CHAIN_DEFAULT = { bloom = 0.45, glow = 0.4, blur = 4, vignette = 0.35, chroma = 1.5, chromasep = 1.5,
+  grain = 0.08, tonemap = 1, aces = 1, pixelate = 0.45, posterize = 0.55, filmgrain = 0.08, kawase = 2 }
+local function scene_chain(comp, node, t)
+  if not scene_builder then return nil end
+  local passes = {}
+  for _, name in ipairs(node.initial.chain or { "bloom", "vignette" }) do
+    local id = scene.CHAIN[name]
+    if not id then return nil end
+    local v = node:get(CHAIN_PROP[name])
+    if v == nil then v = CHAIN_DEFAULT[name] end
+    passes[#passes + 1] = { id, v, t }
+  end
+  for _, child in ipairs(comp.nodes) do
+    if fx_ancestor(child) == node and not SKIP_DRAW[child.kind] and not scene_owns(child) then return nil end
+  end
+  return passes
+end
+
 local function apply_fx(comp, node, t)
   local g = love.graphics
   local opacity = node:get("opacity")
@@ -632,6 +663,22 @@ local function apply_fx(comp, node, t)
   local w = math.floor(node:get("w") or 0)
   local h = math.floor(node:get("h") or 0)
   if w < 1 or h < 1 then return end
+  local passes = scene_chain(comp, node, t)
+  if passes then
+    -- native chain: children stream into a scratch frame the size of the fx
+    -- box, the passes run on the CPU, the result composites in z-order
+    local ox, oy = anchor_offset(node, w, h)
+    scene_builder:transform(node_affine(chain, node))
+    scene_builder:chain_push(passes, { ox, oy, w, h })
+    P.fx_offset = P.fx_offset or {}
+    P.fx_offset[node] = { ox, oy }
+    for _, child in ipairs(comp.nodes) do
+      if fx_ancestor(child) == node then paint_node(comp, child, t) end
+    end
+    P.fx_offset[node] = nil
+    scene_builder:pop()
+    return
+  end
   local fxmod = require("fx")
   local a, b, c = fxmod.canvases(node, w, h)
   local prev = g.getCanvas()
@@ -1276,7 +1323,6 @@ paint_node = function(comp, node, t, stop)
     end
 end
 
-local SKIP_DRAW = { camera = true, light = true, mesh = true }
 
 function P.scene_direct_ok(comp)
   if not scene_builder then return false end

@@ -11,7 +11,7 @@ for f in tests/lint/*.lua; do
   if [ "$want" = clean ]; then
     echo "$out" | grep -q '^lint: 0 errors' && echo "ok   $f" || { echo "FAIL $f (expected clean)"; echo "$out" | grep '^ERROR'; fail=1; }
   else
-    echo "$out" | grep -q "^ERROR *$want" && echo "ok   $f" || { echo "FAIL $f (expected $want)"; fail=1; }
+    echo "$out" | grep -qE "^(ERROR|WARN|INFO) +$want" && echo "ok   $f" || { echo "FAIL $f (expected $want)"; fail=1; }
   fi
 done
 exit $fail

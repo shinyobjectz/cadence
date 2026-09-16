@@ -31,6 +31,7 @@
 //   cs_text_measure(font, size, text, ls, wrap, leading, out[2]) -> 0 | -1
 //   cs_render(cmds, len, strings, strings_len, w, h, threads, out, out_len) -> 0 | -1
 
+mod fx;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
@@ -284,7 +285,7 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
         while let Some(op) = r.next() {
             let n = match op as u32 { 0 => 8, 1 => 9, 2 => 7, 3 | 4 => 2, 5 => 6, 6 => 4, 7 => 5, 8 => 16, 9 => 11, 10 => 2,
                 100 => 6, 101 => { let hdr = r.take::<15>(); match hdr { Some(h) => (h[14] as usize) * 8, None => 0 } }, 102 => 4, 103 => 7, 104 => 5, 105 => 0,
-                106 => 6, 107 => 2, 108 => { found = true; 2 }, 110 => 1, 111 => 13, _ => 0 };
+                106 => 6, 107 => 2, 108 => { found = true; 2 }, 110 => 1, 111 => 13, 112 => { let hdr = r.take::<5>(); match hdr { Some(h) => (h[0] as usize) * 3, None => 0 } }, _ => 0 };
             r.i += n;
         }
         found
@@ -310,7 +311,8 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
     // scratch contexts for 111 fx_push; `layers` says whether a 105 pops a
     // vello layer (false) or closes a scratch frame (true)
     let mut subs: Vec<RenderContext> = Vec::new();
-    let mut fx_params: Vec<([f32; 9], (i32, i32, u16, u16))> = Vec::new();
+    enum Fx { Effects([f32; 9]), Chain(Vec<(u32, f32, f32)>) }
+    let mut fx_params: Vec<(Fx, (i32, i32, u16, u16))> = Vec::new();
     let mut offs: Vec<Affine> = Vec::new(); // scratch-frame offsets, parallel to `subs`
     let mut layers: Vec<bool> = Vec::new();
     let mut temp_images: Vec<ImageId> = Vec::new();
@@ -428,8 +430,11 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                         sub.flush();
                         let mut pm = Pixmap::new(sw, sh);
                         sub.render(&mut pm, &mut st.res);
-                        ellua_effects::apply(pm.data_as_u8_slice_mut(), sw as usize, sh as usize,
-                            fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7], fx[8]);
+                        match fx {
+                            Fx::Effects(fx) => ellua_effects::apply(pm.data_as_u8_slice_mut(), sw as usize, sh as usize,
+                                fx[0], fx[1], fx[2], fx[3], fx[4], fx[5], fx[6], fx[7], fx[8]),
+                            Fx::Chain(passes) => fx::run_chain(pm.data_as_u8_slice_mut(), sw as usize, sh as usize, &passes),
+                        }
                         let id = st.res.register_image(Arc::new(pm));
                         temp_images.push(id);
                         let parent: &mut RenderContext = if let Some(s) = subs.last_mut() { s } else { &mut ctx };
@@ -446,9 +451,16 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                         top.pop_layer();
                     }
                 }
-                111 => {
-                    let p = rd.take::<9>()?;
-                    let [bx, by, bw, bh] = rd.take::<4>()?;
+                111 | 112 => {
+                    let (fxp, [bx, by, bw, bh]) = if op as u32 == 111 {
+                        let p = rd.take::<9>()?;
+                        (Fx::Effects(p), rd.take::<4>()?)
+                    } else {
+                        let [n, bx, by, bw, bh] = rd.take::<5>()?;
+                        let mut passes = Vec::with_capacity(n as usize);
+                        for _ in 0..(n as usize) { let [k, a, e] = rd.take::<3>()?; passes.push((k as u32, a, e)); }
+                        (Fx::Chain(passes), [bx, by, bw, bh])
+                    };
                     // frame-space bbox of the node box under the current affine
                     let corners = [
                         base * Point::new(bx as f64, by as f64),
@@ -467,7 +479,7 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                     sub.set_transform(noff * base);
                     subs.push(sub);
                     offs.push(noff);
-                    fx_params.push((p, (ox, oy, sw, sh)));
+                    fx_params.push((fxp, (ox, oy, sw, sh)));
                     layers.push(true);
                 }
                 106 => {
@@ -527,7 +539,7 @@ fn run(st: &mut State, cmds: &[f32], strings: &[u8], w: u16, h: u16, threads: u1
                     }
                     let spec = TextSpec { font: font as usize, size, ls, wrap, leading, align: align as i32, runs };
                     build_layout(st, &spec);
-                    draw_text(st, &mut ctx, base, x, y, (ow, [or_, og, ob, oa]), emb);
+                    draw_text(st, top, off * base, x, y, (ow, [or_, og, ob, oa]), emb);
                 }
                 _ => return None,
             }

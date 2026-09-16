@@ -89,6 +89,16 @@ function L.run(comp, opts)
     elseif n.kind ~= "flex" and n.kind ~= "kinetic" and n.kind ~= "draw" then
       visual[#visual + 1] = n
     end
+    -- GLSL escape hatches: the pass is opaque to lint, like s:draw
+    if n.kind == "fx" then
+      for _, name in ipairs(n.initial.chain or {}) do
+        if name == "worley" or name == "shadertoy" then
+          add("fx_opaque", "info", n, 0, dur, nil, nil,
+            "fx pass '" .. name .. "' is GLSL: lint cannot see what it does to the picture",
+            "keep the beat readable without it, or express the look as bloom/glow/vignette/chroma/grain")
+        end
+      end
+    end
   end
 
   -- text measurement cache

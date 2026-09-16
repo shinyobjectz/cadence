@@ -62,6 +62,7 @@ comp-level `lint_allow`). Output `--json` with `_meta`, one finding per row:
 | `wall_of_motion` | no bucket with density <0.5 for longer than X s (no rest beats) | 4s |
 | `frozen_span` | visible nodes, zero active segments for > X s | 2s (error at 3s, HF parity) |
 | `exit_symmetric` | exit duration ≥ entrance duration for same node (exits should be 60-70%) | info |
+| `fx_opaque` | `s:fx` chain contains a GLSL pass (`worley`, `shadertoy`) lint cannot see through, same as `s:draw` | info |
 
 ### Geometry & visibility (analytic evaluation at segment endpoints + extrema)
 

@@ -149,6 +149,13 @@ function Builder:fx_push(blur, brightness, contrast, saturate, grayscale, sepia,
   push(self, 111, blur or 0, brightness or 1, contrast or 1, saturate or 1, grayscale or 0, sepia or 0, invert or 0, opacity or 1, hue or 0,
     box[1], box[2], box[3], box[4])
 end
+-- the s:fx chain on the CPU (opcode 112): passes = { {kind, amount, extra}, … }, box as fx_push
+S.CHAIN = { bloom = 1, glow = 2, blur = 3, vignette = 4, chroma = 5, chromasep = 5, grain = 6,
+  tonemap = 7, aces = 7, pixelate = 8, posterize = 9, filmgrain = 10, kawase = 11 }
+function Builder:chain_push(passes, box)
+  push(self, 112, #passes, box[1], box[2], box[3], box[4])
+  for _, p in ipairs(passes) do push(self, p[1], p[2], p[3] or 0) end
+end
 -- vector-node builder surface (same verbs as runtime/vector.lua)
 function Builder:move(x, y) push(self, 3, x, y) end
 function Builder:line(x, y) push(self, 4, x, y) end

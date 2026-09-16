@@ -64,7 +64,9 @@ lib/cadence  (pure Lua)  ──evaluate(t)──▶  runtime/painter.lua
 | effect_blur / effect_opacity | ✅ | |
 | brightness contrast saturate grayscale sepia invert hue | ✅ | opcode 111 `fx_push`: the node renders into a scratch context sized to its transformed box, `ellua-effects::apply` (rlib) runs the same maths as the love shader, composited back as an image. `effects` eval vs love: mean 1.3–2.0/255, max 8 outside glyphs (glyph diffs are the font stack, see Determinism) |
 | video | ✅ | yuv420 → `ed_yuv420_to_rgba` (fixed-point BT.709, row-parallel) → slot (opaque, no premultiply); rgba/jpg frames → slot. Image opacity goes through an opacity layer because vello_cpu 0.2 panics on sampler alpha ≠ 1 (`unimplemented!` in vello_common encode) |
-| fx (shader chain), perspective, world/mesh/camera/light, lottie, spritesheet, spine, chart, ornament, particles, draw | ⏳ love | fx is Moonshine/Shadertoy GLSL — port means CPU reimplementation; `s:draw` stays love by contract |
+| fx chain: bloom glow blur vignette chroma grain tonemap pixelate posterize filmgrain kawase | ✅ | opcode 112 `chain_push`: children stream into a scratch frame the size of the fx box, `scene/src/fx.rs` runs the same maths as the GLSL passes, result composites in z-order. `fx_native` eval vs love: mean 1–2/255 per pass (grain/filmgrain differ in noise pattern only; max diffs sit on circle edges where love's polygonal circles and vello's AA disagree) |
+| fx chain: worley, shadertoy | ⏳ love (escape hatch) | GLSL by contract, like `s:draw`; rendered by love into a slot, lint reports `fx_opaque` |
+| perspective, world/mesh/camera/light, lottie, spritesheet, spine, chart, ornament, particles, draw | ⏳ love | `s:draw` stays love by contract |
 
 ## Determinism
 
@@ -141,7 +143,11 @@ opaque fast path to `cs_image_update` (skip premultiply when alpha is 255).
 Proof: `video` and `video_layers` evals on the direct path at ≥ the love fps.
 Blocker: Wikimedia assets 429; fetch with backoff or mirror to R2.
 
-### 5. fx chain as layers (1–2 days)
+### 5. fx chain as layers — DONE 2026-09-16
+Landed as opcode 112 (see Coverage) plus `tests/lint/fx_opaque.lua`. A chain
+goes native when every pass has a CPU port and every child is scene-owned;
+otherwise the whole node takes the love canvas + slot path, so mixed chains
+(the `fx` eval, which ends in shadertoy) still work. Original plan:
 Once 3 lands, most of the chain is expressible without GLSL: bloom/glow =
 blur layer + `Plus` blend, vignette = radial gradient multiply, chroma =
 three offset copies with channel masks, grain exists. Worley and shadertoy stay
