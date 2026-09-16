@@ -566,17 +566,28 @@ pub extern "C" fn cs_render(
 }
 
 /// Register straight-alpha RGBA8 pixels (love ImageData layout) as a scene image.
+fn to_premul(src: &[u8], n: usize, premul: bool) -> Vec<PremulRgba8> {
+    let mut px = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = src[i * 4 + 3];
+        if premul || a == 255 {
+            px.push(PremulRgba8 { r: src[i * 4], g: src[i * 4 + 1], b: src[i * 4 + 2], a });
+        } else {
+            let a32 = a as u32;
+            let pm = |c: u8| ((c as u32 * a32 + 127) / 255) as u8;
+            px.push(PremulRgba8 { r: pm(src[i * 4]), g: pm(src[i * 4 + 1]), b: pm(src[i * 4 + 2]), a });
+        }
+    }
+    px
+}
+
+/// premul != 0: pixels are already premultiplied (blitz, vello, love canvases).
 #[no_mangle]
-pub extern "C" fn cs_image_register(rgba: *const u8, w: u16, h: u16) -> c_int {
+pub extern "C" fn cs_image_register(rgba: *const u8, w: u16, h: u16, premul: c_int) -> c_int {
     let r = catch_unwind(AssertUnwindSafe(|| {
         let n = w as usize * h as usize;
         let src = unsafe { std::slice::from_raw_parts(rgba, n * 4) };
-        let mut px = Vec::with_capacity(n);
-        for i in 0..n {
-            let a = src[i * 4 + 3] as u32;
-            let pm = |c: u8| ((c as u32 * a + 127) / 255) as u8;
-            px.push(PremulRgba8 { r: pm(src[i * 4]), g: pm(src[i * 4 + 1]), b: pm(src[i * 4 + 2]), a: a as u8 });
-        }
+        let px = to_premul(src, n, premul != 0);
         let mut st = state().lock().unwrap();
         let id = st.res.register_image(Arc::new(Pixmap::from_parts(px, w, h)));
         st.images.push((id, w, h));
@@ -587,16 +598,11 @@ pub extern "C" fn cs_image_register(rgba: *const u8, w: u16, h: u16) -> c_int {
 
 /// Replace the pixels of a registered image slot (html textures, video frames).
 #[no_mangle]
-pub extern "C" fn cs_image_update(slot: c_int, rgba: *const u8, w: u16, h: u16) -> c_int {
+pub extern "C" fn cs_image_update(slot: c_int, rgba: *const u8, w: u16, h: u16, premul: c_int) -> c_int {
     let r = catch_unwind(AssertUnwindSafe(|| {
         let n = w as usize * h as usize;
         let src = unsafe { std::slice::from_raw_parts(rgba, n * 4) };
-        let mut px = Vec::with_capacity(n);
-        for i in 0..n {
-            let a = src[i * 4 + 3] as u32;
-            let pm = |c: u8| ((c as u32 * a + 127) / 255) as u8;
-            px.push(PremulRgba8 { r: pm(src[i * 4]), g: pm(src[i * 4 + 1]), b: pm(src[i * 4 + 2]), a: a as u8 });
-        }
+        let px = to_premul(src, n, premul != 0);
         let mut st = state().lock().unwrap();
         let Some(&(old, _, _)) = st.images.get(slot as usize) else { return -1 };
         st.res.destroy_image(old);

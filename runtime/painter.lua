@@ -324,54 +324,6 @@ end
 
 local paint_node
 
-local function apply_fx(comp, node, t)
-  local g = love.graphics
-  local opacity = node:get("opacity")
-  local chain = parent_chain(node)
-  for _, p in ipairs(chain) do opacity = opacity * (p:get("opacity") or 1) end
-  if opacity <= 0 then return end
-  local w = math.floor(node:get("w") or 0)
-  local h = math.floor(node:get("h") or 0)
-  if w < 1 or h < 1 then return end
-  local fxmod = require("fx")
-  local a, b, c = fxmod.canvases(node, w, h)
-  local prev = g.getCanvas()
-  local pc, pv = g.getStencilTest()
-  g.push("all")
-  g.origin()
-  g.setStencilTest()
-  g.setCanvas({ a, stencil = true })
-  g.clear(0, 0, 0, 0)
-  for _, child in ipairs(comp.nodes) do
-    if fx_ancestor(child) == node then
-      paint_node(comp, child, t, node)
-    end
-  end
-  g.setCanvas(prev and { prev, stencil = true } or nil)
-  g.pop()
-  if pc then g.setStencilTest(pc, pv) end
-  local out = fxmod.apply(node, a, b, c, t, w, h)
-  g.push("all")
-  for _, p in ipairs(chain) do
-    g.translate(p:get("x") or 0, p:get("y") or 0)
-    g.rotate(p:get("rotation") or 0)
-    local ps = p:get("scale") or 1
-    g.scale(ps, ps)
-  end
-  g.translate(node:get("x") or 0, node:get("y") or 0)
-  g.rotate(node:get("rotation") or 0)
-  local s = node:get("scale") or 1
-  g.scale(s, s)
-  local ox, oy = anchor_offset(node, w, h)
-  local bm, ba = g.getBlendMode()
-  g.setBlendMode("alpha", "premultiplied")
-  setcolor({ 1, 1, 1, 1 }, opacity)
-  g.draw(out, ox, oy)
-  g.setBlendMode(bm, ba)
-  g.pop()
-end
-
-
 -- ---- cadence-scene (CADENCE_SCENE=1): text goes to the vello rasterizer ----
 local scene = require("scene")
 P.scene = scene
@@ -426,7 +378,7 @@ end
 
 -- which nodes the scene crate paints today (grows one kind at a time)
 local SCENE_KINDS = { text = true, rect = true, circle = true, flex = true, group = true, kinetic = true,
-  image = true, svg = true, page = true, vector = true, html = true }
+  image = true, svg = true, page = true, vector = true, html = true, world = true, fx = true }
 local EFFECT_DEFAULTS = { effect_blur = 0, effect_brightness = 1, effect_contrast = 1, effect_saturate = 1,
   effect_grayscale = 0, effect_sepia = 0, effect_invert = 0, effect_opacity = 1, effect_hue_rotate = 0 }
 local SCENE_BLENDS = { alpha = true, multiply = true, screen = true, darken = true, lighten = true, add = true }
@@ -511,18 +463,7 @@ local function scene_html(node, opacity, chain)
     html.render(markup, i.w, i.h, 1.0, node.htmldata:getFFIPointer(), node.htmldata:getSize())
     node.html_key = progress_key
   end
-  -- blitz output is premultiplied; the slot expects straight alpha. Unpremultiply once on change.
-  if changed then
-    local ffi = require("ffi")
-    local px = ffi.cast("uint8_t*", node.htmldata:getFFIPointer())
-    for k = 0, i.w * i.h - 1 do
-      local a = px[k * 4 + 3]
-      if a > 0 and a < 255 then
-        for c = 0, 2 do px[k * 4 + c] = math.min(255, math.floor(px[k * 4 + c] * 255 / a + 0.5)) end
-      end
-    end
-  end
-  local id = scene.image_slot(node, node.htmldata, changed)
+  local id = scene.image_slot(node, node.htmldata, changed, true) -- blitz output is premultiplied
   local ox, oy = anchor_offset(node, i.w, i.h)
   scene_builder:transform(node_affine(chain, node))
   scene_builder:image(id, ox, oy, i.w, i.h, 0, opacity)
@@ -612,6 +553,64 @@ scene_text = function(node, opacity, chain)
   })
 end
 -- ----------------------------------------------------------------------------
+
+local function apply_fx(comp, node, t)
+  local g = love.graphics
+  local opacity = node:get("opacity")
+  local chain = parent_chain(node)
+  for _, p in ipairs(chain) do opacity = opacity * (p:get("opacity") or 1) end
+  if opacity <= 0 then return end
+  local w = math.floor(node:get("w") or 0)
+  local h = math.floor(node:get("h") or 0)
+  if w < 1 or h < 1 then return end
+  local fxmod = require("fx")
+  local a, b, c = fxmod.canvases(node, w, h)
+  local prev = g.getCanvas()
+  local pc, pv = g.getStencilTest()
+  g.push("all")
+  g.origin()
+  g.setStencilTest()
+  g.setCanvas({ a, stencil = true })
+  g.clear(0, 0, 0, 0)
+  for _, child in ipairs(comp.nodes) do
+    if fx_ancestor(child) == node then
+      paint_node(comp, child, t, node)
+    end
+  end
+  g.setCanvas(prev and { prev, stencil = true } or nil)
+  g.pop()
+  if pc then g.setStencilTest(pc, pv) end
+  local out = fxmod.apply(node, a, b, c, t, w, h)
+  if scene_builder then
+    -- scene mode: the processed canvas becomes an image slot in the one frame
+    local data = g.readbackTexture and g.readbackTexture(out) or out:newImageData()
+    local id = scene.image_slot(node, data, true, true)
+    data:release()
+    local ox, oy = anchor_offset(node, w, h)
+    scene_builder:transform(node_affine(chain, node))
+    scene_builder:image(id, ox, oy, w, h, 0, opacity)
+    return
+  end
+  g.push("all")
+  for _, p in ipairs(chain) do
+    g.translate(p:get("x") or 0, p:get("y") or 0)
+    g.rotate(p:get("rotation") or 0)
+    local ps = p:get("scale") or 1
+    g.scale(ps, ps)
+  end
+  g.translate(node:get("x") or 0, node:get("y") or 0)
+  g.rotate(node:get("rotation") or 0)
+  local s = node:get("scale") or 1
+  g.scale(s, s)
+  local ox, oy = anchor_offset(node, w, h)
+  local bm, ba = g.getBlendMode()
+  g.setBlendMode("alpha", "premultiplied")
+  setcolor({ 1, 1, 1, 1 }, opacity)
+  g.draw(out, ox, oy)
+  g.setBlendMode(bm, ba)
+  g.pop()
+end
+
 
 paint_node = function(comp, node, t, stop)
   local g = love.graphics
@@ -914,12 +913,18 @@ paint_node = function(comp, node, t, stop)
               end
             end
             scene3d.render(b, w, h, node.worlddata:getFFIPointer(), node.worlddata:getSize())
-            node.worldimg:replacePixels(node.worlddata)
-            setcolor({ 1, 1, 1, 1 }, opacity)
-            love.graphics.setBlendMode("alpha", "premultiplied")
             local ox, oy = anchor_offset(node, w, h)
-            g.draw(node.worldimg, ox, oy)
-            love.graphics.setBlendMode("alpha", "alphamultiply")
+            if scene_builder and not stop then
+              local id = scene.image_slot(node, node.worlddata, true, true)
+              scene_builder:transform(node_affine(chain, node))
+              scene_builder:image(id, ox, oy, w, h, 0, opacity)
+            else
+              node.worldimg:replacePixels(node.worlddata)
+              setcolor({ 1, 1, 1, 1 }, opacity)
+              love.graphics.setBlendMode("alpha", "premultiplied")
+              g.draw(node.worldimg, ox, oy)
+              love.graphics.setBlendMode("alpha", "alphamultiply")
+            end
           end
         end
       elseif node.kind == "html" then

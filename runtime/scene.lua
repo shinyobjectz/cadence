@@ -9,8 +9,8 @@ ffi.cdef([[
 int cs_font_load(const char *path);
 int cs_text_measure(int font, float size, const char *text, float ls, float wrap,
                     float leading, float *out);
-int cs_image_register(const uint8_t *rgba, uint16_t w, uint16_t h);
-int cs_image_update(int slot, const uint8_t *rgba, uint16_t w, uint16_t h);
+int cs_image_register(const uint8_t *rgba, uint16_t w, uint16_t h, int premul);
+int cs_image_update(int slot, const uint8_t *rgba, uint16_t w, uint16_t h, int premul);
 int cs_render(const float *cmds, size_t len, const uint8_t *strings, size_t strings_len,
               uint16_t w, uint16_t h, uint16_t threads, uint8_t *out, size_t out_len);
 ]])
@@ -166,14 +166,17 @@ function Builder:grain(amount, seed)
 end
 
 -- dynamic images (html textures, frames): one slot per node, updated on change
-function S.image_slot(node, imagedata, changed)
+-- premul: true when the buffer is already premultiplied (blitz, vello, canvases)
+function S.image_slot(node, imagedata, changed, premul)
   local w, h = imagedata:getDimensions()
   local ptr = ffi.cast("const uint8_t*", imagedata:getFFIPointer())
-  if node._scene_slot == nil then
-    node._scene_slot = lib.cs_image_register(ptr, w, h)
+  local pm = premul and 1 or 0
+  if node._scene_slot == nil or node._scene_w ~= w or node._scene_h ~= h then
+    node._scene_slot = lib.cs_image_register(ptr, w, h, pm)
+    node._scene_w, node._scene_h = w, h
     assert(node._scene_slot >= 0, "cadence-scene: image register failed")
   elseif changed then
-    assert(lib.cs_image_update(node._scene_slot, ptr, w, h) == 0, "cadence-scene: image update failed")
+    assert(lib.cs_image_update(node._scene_slot, ptr, w, h, pm) == 0, "cadence-scene: image update failed")
   end
   return node._scene_slot
 end
@@ -184,7 +187,7 @@ function S.image_id(path, imagedata)
   local id = image_ids[path]
   if id then return id end
   local w, h = imagedata:getDimensions()
-  id = lib.cs_image_register(ffi.cast("const uint8_t*", imagedata:getFFIPointer()), w, h)
+  id = lib.cs_image_register(ffi.cast("const uint8_t*", imagedata:getFFIPointer()), w, h, 0)
   assert(id >= 0, "cadence-scene: image register failed: " .. path)
   image_ids[path] = id
   return id
