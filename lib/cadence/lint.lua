@@ -102,6 +102,85 @@ function L.run(comp, opts)
     end
   end
 
+  -- Recording builder: same verbs as runtime/scene.lua and runtime/vector.lua,
+  -- but it only accumulates the numbers. Calling draw(v, t) with it at each
+  -- sample makes the callback's motion measurable (diff of command streams).
+  local Rec = {}
+  Rec.__index = Rec
+  local function rec_col(c)
+    if type(c) == "string" then c = require("cadence.color").parse(c) end
+    c = c or { 1, 1, 1, 1 }
+    return c[1], c[2], c[3], c[4] or 1
+  end
+  -- one entry per verb: { verb, n1, n2, ... } so streams align by command,
+  -- not by raw index (a draw-on that appends a point must not shift the rest)
+  local function cmd(self, verb, ...)
+    local e = { verb }
+    for i = 1, select("#", ...) do
+      local v = select(i, ...)
+      if type(v) == "number" then e[#e + 1] = v end
+    end
+    self.n[#self.n + 1] = e
+  end
+  function Rec:reset() self.n = {} end
+  function Rec:rect(x, y, w, h, c, rad) cmd(self, "rect", x, y, w, h, rad or 0, rec_col(c)) end
+  function Rec:circle(cx, cy, r, c) cmd(self, "circle", cx, cy, r, rec_col(c)) end
+  function Rec:move(x, y) cmd(self, "move", x, y) end
+  function Rec:line(x, y) cmd(self, "line", x, y) end
+  function Rec:curve(x1, y1, x2, y2, x, y) cmd(self, "curve", x1, y1, x2, y2, x, y) end
+  function Rec:fill(c) cmd(self, "fill", rec_col(c)) end
+  function Rec:stroke(w, c) cmd(self, "stroke", w, rec_col(c)) end
+  function Rec:polyline(pts, w, c)
+    for i = 1, #pts - 1, 2 do cmd(self, i == 1 and "move" or "line", pts[i], pts[i + 1]) end
+    cmd(self, "stroke", w or 2, rec_col(c))
+  end
+  function Rec:gradient(x, y, w, h, x0, y0, x1, y1, c0, c1)
+    local r0, g0, b0, a0 = rec_col(c0); cmd(self, "gradient", x, y, w, h, x0, y0, x1, y1, r0, g0, b0, a0, rec_col(c1))
+  end
+  function Rec:radial(cx, cy, r, c0, c1)
+    local r0, g0, b0, a0 = rec_col(c0); cmd(self, "radial", cx, cy, r, r0, g0, b0, a0, rec_col(c1))
+  end
+  function Rec:grain(amount, seed) cmd(self, "grain", amount, seed or 1) end
+  function Rec:image(id, x, y, w, h, rx, a) cmd(self, "image", id, x, y, w, h, rx or 0, a or 1) end
+  function Rec:clip_push(x, y, w, h, rx) cmd(self, "clip", x, y, w, h, rx or 0) end
+  function Rec:clip_pop() end
+  function Rec:pop() end
+  function Rec:transform(m) cmd(self, "transform", unpack(m)) end
+  function Rec:clear(c) cmd(self, "clear", rec_col(c)) end
+  local function record_draw(n, t)
+    local fn = n.initial.draw
+    if type(fn) ~= "function" then return nil end
+    local b = setmetatable({ n = {} }, Rec)
+    local ok = pcall(fn, b, t, n)
+    if not ok then return nil end
+    return b.n
+  end
+  -- amplitude between two recorded streams: mean per-command displacement over
+  -- the node box (a box moving 7px reads like a rect node moving 7px), plus a
+  -- structural term when the command sequence itself changes shape.
+  local function stream_delta(p, q, box)
+    if not p or not q then return 0 end
+    local m = math.min(#p, #q)
+    local peak, mismatch = 0, 0
+    for i = 1, m do
+      local a, b = p[i], q[i]
+      if a[1] ~= b[1] then
+        mismatch = mismatch + 1
+      else
+        local k = math.min(#a, #b)
+        local acc = 0
+        for j = 2, k do acc = acc + math.abs(b[j] - a[j]) end
+        if k > 1 and acc / (k - 1) > peak then peak = acc / (k - 1) end
+      end
+    end
+    -- the most-moved command sets the amplitude: "is anything moving, how fast"
+    local d = peak / box
+    local ln = math.max(#p, #q)
+    if ln > 0 then d = d + ((math.abs(#p - #q) + mismatch) / ln) * 0.25 end
+    if d > 1 then d = 1 end
+    return d
+  end
+
   -- ============ frame-grid sampling ============
   -- states[s][node] = {x,y,op,scale,size,w,h,r, visible, bx0,by0,bx1,by1}
   local states = {}
@@ -145,6 +224,11 @@ function L.run(comp, opts)
       else
         row[n] = { x = x, y = y, op = op, vis = vis, sc = sc, rot = rot }
       end
+      local st = row[n]
+      st.reveal = g("reveal")
+      st.progress = g("progress")
+      st.outline, st.weight, st.tracking = g("outline"), g("weight"), g("tracking")
+      if n.kind == "vector" and vis then st.stream = record_draw(n, t) end
     end
     states[s] = row
   end
@@ -163,6 +247,27 @@ function L.run(comp, opts)
           + math.abs((q.sc or 1) - (p.sc or 1)) + math.abs(q.op - p.op)
           + math.abs((q.rot or 0) - (p.rot or 0)) / math.pi
           + (q.size and p.size and math.abs(q.size - p.size) / 100 or 0)
+        -- reveal (type-on) is motion: glyphs typed this step × glyph width, over frame width
+        if q.reveal and p.reveal and q.reveal ~= p.reveal then
+          local nchars = #((n.initial.text or ""):gsub("{[^}]*}", ""))
+          local gw = (q.size or n.initial.size or 32) * 0.55
+          d = d + math.abs(q.reveal - p.reveal) * nchars * gw / comp.width
+        end
+        -- stroked type breathing (outline/weight) and tracking are motion too
+        if q.outline and p.outline then d = d + math.abs(q.outline - p.outline) end
+        if q.weight and p.weight then d = d + math.abs(q.weight - p.weight) end
+        if q.tracking and p.tracking and q.tracking ~= p.tracking then
+          local nchars = #((n.initial.text or ""):gsub("{[^}]*}", ""))
+          d = d + math.abs(q.tracking - p.tracking) * nchars / comp.width
+        end
+        if q.progress and p.progress and q.progress ~= p.progress then
+          d = d + math.abs(q.progress - p.progress) / 100
+        end
+        -- vector draw callbacks: diff of the recorded command streams
+        if n.kind == "vector" and (q.stream or p.stream) then
+          local box = math.max(n.initial.w or comp.width, n.initial.h or comp.height, 1)
+          d = d + stream_delta(p.stream, q.stream, box)
+        end
         raw[n] = d
         local key = n._group or n
         local e = by_group[key] or { sum = 0, n = 0 }
@@ -444,6 +549,12 @@ function L.run(comp, opts)
         if st and st.vis and st.op > 0.5 and not reported then
           comp.timeline:evaluate(s / fps)
           local fg = n.state.color or n.initial.color
+          local outline = n.state.outline
+          if outline == nil then outline = n.initial.outline end
+          if outline and outline > 0 then
+            fg = n.initial.outline_color or fg
+            if type(fg) == "string" then fg = require("cadence.color").parse(fg) end
+          end
           local bg = bg_color_at(s)
           if fg and bg then
             local ratio = contrast_ratio(fg, bg)

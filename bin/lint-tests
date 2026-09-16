@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Lint fixtures: each tests/lint/<name>.lua carries an expectation in its first line:
+#   -- expect: frozen_span     (the code must be reported)
+#   -- expect: clean           (zero errors)
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
+fail=0
+for f in tests/lint/*.lua; do
+  want=$(head -1 "$f" | sed -n 's/^-- expect: *//p')
+  out=$(bin/cadence lint "$f" 2>&1)
+  if [ "$want" = clean ]; then
+    echo "$out" | grep -q '^lint: 0 errors' && echo "ok   $f" || { echo "FAIL $f (expected clean)"; echo "$out" | grep '^ERROR'; fail=1; }
+  else
+    echo "$out" | grep -q "^ERROR *$want" && echo "ok   $f" || { echo "FAIL $f (expected $want)"; fail=1; }
+  fi
+done
+exit $fail
