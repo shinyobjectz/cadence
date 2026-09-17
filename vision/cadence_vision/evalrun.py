@@ -110,8 +110,8 @@ def content_marks(src, t: float, W: int, H: int, slate: bool = False) -> list[di
     marks, _ = AN.comp_marks(src, t)
     keep = []
     for m in marks:
-        if m["w"] >= 0.85 * W and m["h"] >= 0.85 * H:
-            continue
+        if m["kind"] == "rect" and m["w"] >= 0.85 * W and m["h"] >= 0.85 * H:
+            continue          # a background wash, not an element (a scaled-up photo still counts)
         if m["kind"] not in ("text", "circle", "rect", "image", "video"):
             continue
         if not slate and m["kind"] == "text" and m["y"] < 0.08 * H and m["h"] < 0.06 * H:

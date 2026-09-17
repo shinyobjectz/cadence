@@ -174,43 +174,46 @@ wheel is installed `--no-deps` because its xformers pin has no macOS build).
 
 ### Eval results (2026-09-16, `vision/eval/REPORT-2026-09-16.md`)
 
-17 questions with exact ground truth from comp state, 189 calls through
+18 questions with exact ground truth from comp state, 205 calls through
 OpenRouter: Claude Sonnet 5, Gemini 3.8 Flash, GPT-5.4, Qwen3-VL 235B.
 
 | model | raw | annotated | text | frame+text | sheet | video | pair | depth | all |
 |---|---|---|---|---|---|---|---|---|---|
-| claude | 8/12 | 5/8 | 6/8 | 7/9 | 3/3 | — | 2/2 | 2/4 | 33/46 |
-| gemini | 9/12 | 5/8 | 6/8 | 6/9 | 3/3 | 5/5 | 2/2 | 4/4 | 40/51 |
-| gpt | 8/12 | 2/8 | 7/8 | 7/9 | 3/3 | — | 2/2 | 4/4 | 33/46 |
-| qwen | 8/12 | 2/8 | 4/8 | 5/9 | 3/3 | — | 2/2 | 3/4 | 27/46 |
+| claude | 9/13 | 5/9 | 8/9 | 9/10 | 3/3 | — | 2/2 | 2/4 | 38/50 |
+| gemini | 11/13 | 7/9 | 6/9 | 8/10 | 3/3 | 5/5 | 2/2 | 4/4 | 46/55 |
+| gpt | 9/13 | 3/9 | 7/9 | 9/10 | 3/3 | — | 2/2 | 4/4 | 37/50 |
+| qwen | 9/13 | 3/9 | 5/9 | 6/10 | 3/3 | — | 2/2 | 3/4 | 31/50 |
 
-By question kind (all models): leftmost 7/8 under every condition; count
-10/24 raw, 7/24 annotated, 16/24 text, 14/24 frame+text; appears 12/12 on a
-labeled sheet and 3/3 native video; direction 8/8 on a labeled pair and 2/2
-video; flat 12/12 raw but 9/12 with the depth map; nearer 4/4 everywhere.
+By question kind (all models): leftmost 10–11/12 under every condition;
+count 12/24 raw, 8/24 annotated, 15/24 text, 17/24 frame+text; appears
+12/12 on a labeled sheet and 3/3 native video; direction 8/8 on a labeled
+pair and 2/2 video; flat 12/12 raw but 9/12 with the depth map; nearer 4/4
+everywhere. Mean prompt tokens: text 520, depth 690, sheet 930, raw 1120,
+annotated 1350, frame+text 1580, pair 2190, native video 190.
 
 What it says:
 
 - **Time and motion questions are solved by the cheap views.** A six-frame
-  sheet labeled with seconds (~930 tokens) and a labeled pair answered every
-  "when does X appear" and "which way does X move" question, for all four
-  models. Gemini's native video did the same at ~190 tokens.
-- **Scene text beats pixels for counting**, at a third of the tokens (520 vs
-  1116). Exact data from the renderer is the strongest view we have; the
-  planner should send it whenever the source is a comp.
-- **Set-of-Mark annotation hurts counting.** GPT answered 10, 15 and 22 with
-  marks on screen (it counted marks, legend entries or both). Marks are for
-  binding answers to node ids, so `plan_view` should only add them when the
-  question names elements, and never for "how many".
+  sheet labeled with seconds and a labeled pair answered every "when does X
+  appear" and "which way does X move" question, for all four models.
+  Gemini's native video did the same at a tenth of the tokens.
+- **Frame plus scene text is the best view for counting and naming**, and
+  scene text alone beats the raw frame at half the tokens. Exact data from
+  the renderer is the strongest view we have; the planner should send it
+  whenever the source is a comp.
+- **Set-of-Mark annotation hurts counting.** GPT answered 9, 10, 15 and 22
+  with marks on screen (it counted marks, legend entries or both). Marks are
+  for binding answers to node ids, so `plan_view` should add them only when
+  the question names elements, never for "how many".
 - **The depth side-by-side did not help on these comps.** Raw frames already
-  read flat vs perspective 12/12; adding the depth map cost Claude one answer
-  (it called the perspective planes FLAT). Depth earns its place on real
-  footage and per-node depth ordering, not on synthetic 2D comps; the
-  planner should reserve it for clip sources and explicit depth questions.
-- Only the remaining misses: count on `captions` (four text blocks plus a
-  bar, models under-count by one raw and over-count with marks) and the
-  `image` flat question, where a Ken Burns photo reads as FLAT to some
-  models under the depth view.
+  read flat vs perspective 12/12; the depth map cost Claude and Qwen answers
+  (a Ken Burns photo and the perspective planes called FLAT). Depth earns
+  its place on real footage and per-node depth ordering, not on synthetic 2D
+  comps; the planner should reserve it for clip sources and explicit depth
+  questions.
+- The generator had one ground-truth bug (a scaled-up photo was filtered as
+  a background); every model disagreed with it under every view, which is
+  the harness working as intended. Fixed, regraded from cache.
 
 Run again with `bin/cadence-vision eval` (replies are cached per model ×
 view under `vision/cache/eval/`); `--questions-only` prints the questions.
