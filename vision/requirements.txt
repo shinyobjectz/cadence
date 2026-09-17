@@ -1,0 +1,24 @@
+# cadence-vision: the visualization MCP. Python 3.12 (bin/vision-setup builds vision/.venv with uv).
+mcp>=1.2
+numpy<2
+pillow
+opencv-python-headless
+torch>=2.4
+torchvision
+# Depth Anything 3 (installed with --no-deps by bin/vision-setup: its xformers pin does not build on macOS)
+einops
+omegaconf
+safetensors
+huggingface-hub
+plyfile
+e3nn
+trimesh
+imageio
+typer
+requests
+moviepy==1.0.3
+evo
+pycolmap
+open3d
+addict
+matplotlib

@@ -44,3 +44,7 @@ examples/assets/ab6ix_breathe.f137.mp4.part
 # cadence-model runs and harness scratch comps
 model/out/
 .*.model.lua
+
+# cadence-vision venv and rendered/derived views
+vision/.venv/
+vision/cache/

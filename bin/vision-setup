@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Build vision/.venv (Python 3.12 via uv) for the cadence-vision MCP.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV="$ROOT/vision/.venv"
+command -v uv >/dev/null || { echo "vision-setup: uv not found (https://docs.astral.sh/uv/)" >&2; exit 1; }
+[[ -x "$VENV/bin/python" ]] || uv venv --python 3.12 "$VENV"
+uv pip install --python "$VENV/bin/python" -r "$ROOT/vision/requirements.txt"
+# depth-anything-3 pins xformers, which has no macOS build; its deps are listed in requirements.txt instead
+uv pip install --python "$VENV/bin/python" --no-deps depth-anything-3
+"$VENV/bin/python" - <<'PY'
+import torch, mcp, depth_anything_3
+dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+print(f"vision-setup: torch {torch.__version__} device={dev}, mcp ok, depth_anything_3 ok")
+PY

@@ -56,6 +56,16 @@ npx skills add shinyobjectz/cadence
 
 All verification commands emit **`cadence.result/v1`** JSON — structured findings agents can parse without reading stack traces.
 
+## Vision MCP
+
+`bin/cadence-vision` is an MCP server (registered in `.mcp.json`) that shows a
+comp, clip or image to any vision or video model in the shape it reads best:
+per-model profiles, keyframes, labeled contact sheets, numbered marks bound to
+the comp's own node ids, scene text, diffs, and Depth Anything 3 depth and
+multi-view geometry with rendered top/iso views. `bin/vision-setup` builds its
+venv; `bin/cadence-vision call TOOL k=v` runs any tool from the shell.
+Design and measurements: `docs/VISION.md`.
+
 ## Terminal
 
 <p align="center">

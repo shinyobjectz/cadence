@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cadence-vision": {
+      "command": "bin/cadence-vision",
+      "args": ["serve"]
+    }
+  }
+}
