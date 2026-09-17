@@ -1,9 +1,12 @@
 """Pick n times from a source under a fixed frame budget.
 
 uniform  evenly spaced
-scene    frames right after the strongest histogram cuts, then uniform fill
+scene    frames right after the strongest cuts (CLIP distance when available, else histogram), then uniform fill
 motion   equal slices of cumulative motion energy (busy passages get more frames)
-diverse  farthest-point sampling on tiny thumbnails (coverage of distinct looks)
+diverse  farthest-point sampling in CLIP space (else on tiny thumbnails): coverage of distinct looks
+query    relevance to a text query + coverage (needs CLIP): the AKS recipe
+
+CLIP = open_clip ViT-B-32; embeddings of the scan strip are cached per source.
 """
 
 from __future__ import annotations
@@ -62,7 +65,34 @@ def _fill_uniform(chosen: list[float], duration: float, n: int) -> list[float]:
     return chosen[:n]
 
 
-def pick(src: Source, n: int, strategy: str = "diverse", window: tuple[float, float] | None = None) -> dict:
+def _clip(src: Source, frames: np.ndarray, use_clip: bool):
+    if not use_clip:
+        return None
+    try:
+        from . import embed
+        if not embed.available():
+            return None
+        return embed.strip_embeddings(f"{src.media}|{src.media.stat().st_mtime_ns}|{len(frames)}", frames)
+    except Exception:
+        return None
+
+
+def _fps_sample(feat: np.ndarray, n: int, start: int = 0, weights: np.ndarray | None = None) -> list[int]:
+    """Farthest-point sampling; `weights` (0..1) scale the distance so relevant frames win ties."""
+    chosen = [start]
+    d = np.linalg.norm(feat - feat[start], axis=1)
+    while len(chosen) < min(n, len(feat)):
+        score = d if weights is None else d * (0.25 + weights)
+        j = int(score.argmax())
+        if d[j] <= 1e-6:
+            break
+        chosen.append(j)
+        d = np.minimum(d, np.linalg.norm(feat - feat[j], axis=1))
+    return chosen
+
+
+def pick(src: Source, n: int, strategy: str = "diverse", window: tuple[float, float] | None = None,
+         query: str | None = None, use_clip: bool = True) -> dict:
     n = max(1, int(n))
     if src.kind == "image":
         return {"times": [0.0], "strategy": "image", "scores": {}}
@@ -77,9 +107,18 @@ def pick(src: Source, n: int, strategy: str = "diverse", window: tuple[float, fl
     if len(frames) == 0:
         return {"times": [round(t0 + x, 3) for x in _uniform(dur, n)], "strategy": "uniform", "scores": {}}
 
+    emb = _clip(src, frames, use_clip) if strategy in ("scene", "diverse", "query") else None
+    if strategy == "query" and (emb is None or not query):
+        strategy = "diverse"
+
     if strategy == "scene":
-        cs = cut_scores(frames)
-        thr = max(0.25, float(cs.mean() + 2.5 * cs.std()))
+        if emb is not None:
+            cs = np.zeros(len(frames), np.float32)
+            cs[1:] = 1.0 - (emb[1:] * emb[:-1]).sum(1)       # cosine distance between neighbours
+            thr = max(0.12, float(cs.mean() + 2.5 * cs.std()))
+        else:
+            cs = cut_scores(frames)
+            thr = max(0.25, float(cs.mean() + 2.5 * cs.std()))
         cuts = [int(i) for i in np.where(cs > thr)[0]]
         # merge cuts closer than 0.5 s
         merged = []
@@ -90,7 +129,8 @@ def pick(src: Source, n: int, strategy: str = "diverse", window: tuple[float, fl
         chosen = chosen[:n]
         out = _fill_uniform([c - t0 for c in chosen], dur, n)
         return {"times": [round(t0 + c, 3) for c in out], "strategy": "scene",
-                "scores": {"cuts_at": [round(float(times[i]), 2) for i in merged], "threshold": round(thr, 3)}}
+                "scores": {"cuts_at": [round(float(times[i]), 2) for i in merged], "threshold": round(thr, 3),
+                           "features": "clip" if emb is not None else "histogram"}}
 
     if strategy == "motion":
         e = motion_energy(frames)
@@ -104,19 +144,28 @@ def pick(src: Source, n: int, strategy: str = "diverse", window: tuple[float, fl
         return {"times": [round(t0 + c_, 3) for c_ in out], "strategy": "motion",
                 "scores": {"energy_mean": round(float(e.mean()), 3), "energy_max": round(float(e.max()), 3)}}
 
-    # diverse: farthest-point sampling on 16x9 thumbnails (colour + luminance)
-    small = np.stack([np.asarray(_thumb(f)) for f in frames]).reshape(len(frames), -1).astype(np.float32) / 255
-    chosen_idx = [0]
-    d = np.linalg.norm(small - small[0], axis=1)
-    while len(chosen_idx) < min(n, len(frames)):
-        j = int(d.argmax())
-        if d[j] <= 1e-6:
-            break
-        chosen_idx.append(j)
-        d = np.minimum(d, np.linalg.norm(small - small[j], axis=1))
+    if strategy == "query":
+        from . import embed
+        rel = emb @ embed.embed_text(query)                     # cosine relevance per frame
+        w = (rel - rel.min()) / (np.ptp(rel) + 1e-9)
+        chosen_idx = _fps_sample(emb, n, start=int(rel.argmax()), weights=w)
+        chosen = sorted(float(times[i]) for i in chosen_idx)
+        out = _fill_uniform([c - t0 for c in chosen], dur, n)
+        top = np.argsort(-rel)[:3]
+        return {"times": [round(t0 + c, 3) for c in out], "strategy": "query", "query": query,
+                "scores": {"best_match_at": [round(float(times[i]), 2) for i in top],
+                           "relevance_range": [round(float(rel.min()), 3), round(float(rel.max()), 3)], "features": "clip"}}
+
+    # diverse: farthest-point sampling, CLIP space when available else 16x9 thumbnails (colour + luminance)
+    if emb is not None:
+        feat = emb
+    else:
+        feat = np.stack([np.asarray(_thumb(f)) for f in frames]).reshape(len(frames), -1).astype(np.float32) / 255
+    chosen_idx = _fps_sample(feat, n)
     chosen = sorted(float(times[i]) for i in chosen_idx)
     out = _fill_uniform([c - t0 for c in chosen], dur, n)
-    return {"times": [round(t0 + c, 3) for c in out], "strategy": "diverse", "scores": {"picked_by_distance": len(chosen_idx)}}
+    return {"times": [round(t0 + c, 3) for c in out], "strategy": "diverse",
+            "scores": {"picked_by_distance": len(chosen_idx), "features": "clip" if emb is not None else "pixels"}}
 
 
 def _thumb(f: np.ndarray):

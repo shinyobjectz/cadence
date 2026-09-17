@@ -148,19 +148,87 @@ depth,scene_text,diff,server}.py`, `vision/cli.py`, `vision/lua/props.lua`,
 (gitignored, built by `bin/vision-setup` with uv; the `depth-anything-3`
 wheel is installed `--no-deps` because its xformers pin has no macOS build).
 
+
+### Plan 2 (2026-09-16): the four "left for later" items
+
+1. **Shaper widths.** `vision/lua/props.lua` loads `native/release/libcadence_scene.*`
+   over LuaJIT FFI (no LÖVE), registers each text node's font with
+   `cs_font_load`, and emits measured `tw`/`th` via `cs_text_measure` with the
+   node's tracking, wrap and leading. `annotate.py` uses them when present and
+   keeps the 0.56·size estimate as the fallback. Test: a wide-glyph title's box
+   must match the render within a few px.
+2. **Eval harness** `vision/eval/`: questions generated from comp state with
+   ground truth (leftmost node, visible count, first-appearance time, nearer
+   plane, flat frame, moving region); conditions (raw frame, annotated, sheet,
+   scene text, frame+text, depth side-by-side); models through OpenRouter
+   (Claude, Gemini, GPT, Qwen3-VL); accuracy table per model × condition written
+   to `vision/eval/out/`. `bin/cadence-vision eval` runs it.
+3. **`native_video` tool**: trim + scale + H.264 via ffmpeg, optional
+   pre-sampling to the target fps, data URL under a size cap, and the exact
+   request fragment for Gemini direct, OpenRouter and Qwen/vLLM.
+4. **CLIP keyframes**: open_clip ViT-B-32 (laion2b) on MPS embeds the cached
+   scan strip once; `diverse` and `scene` use embedding distance; new `query`
+   strategy = relevance + coverage. Falls back to pixel thumbnails when
+   open_clip is missing.
+
+
+### Eval results (2026-09-16, `vision/eval/REPORT-2026-09-16.md`)
+
+17 questions with exact ground truth from comp state, 189 calls through
+OpenRouter: Claude Sonnet 5, Gemini 3.8 Flash, GPT-5.4, Qwen3-VL 235B.
+
+| model | raw | annotated | text | frame+text | sheet | video | pair | depth | all |
+|---|---|---|---|---|---|---|---|---|---|
+| claude | 8/12 | 5/8 | 6/8 | 7/9 | 3/3 | — | 2/2 | 2/4 | 33/46 |
+| gemini | 9/12 | 5/8 | 6/8 | 6/9 | 3/3 | 5/5 | 2/2 | 4/4 | 40/51 |
+| gpt | 8/12 | 2/8 | 7/8 | 7/9 | 3/3 | — | 2/2 | 4/4 | 33/46 |
+| qwen | 8/12 | 2/8 | 4/8 | 5/9 | 3/3 | — | 2/2 | 3/4 | 27/46 |
+
+By question kind (all models): leftmost 7/8 under every condition; count
+10/24 raw, 7/24 annotated, 16/24 text, 14/24 frame+text; appears 12/12 on a
+labeled sheet and 3/3 native video; direction 8/8 on a labeled pair and 2/2
+video; flat 12/12 raw but 9/12 with the depth map; nearer 4/4 everywhere.
+
+What it says:
+
+- **Time and motion questions are solved by the cheap views.** A six-frame
+  sheet labeled with seconds (~930 tokens) and a labeled pair answered every
+  "when does X appear" and "which way does X move" question, for all four
+  models. Gemini's native video did the same at ~190 tokens.
+- **Scene text beats pixels for counting**, at a third of the tokens (520 vs
+  1116). Exact data from the renderer is the strongest view we have; the
+  planner should send it whenever the source is a comp.
+- **Set-of-Mark annotation hurts counting.** GPT answered 10, 15 and 22 with
+  marks on screen (it counted marks, legend entries or both). Marks are for
+  binding answers to node ids, so `plan_view` should only add them when the
+  question names elements, and never for "how many".
+- **The depth side-by-side did not help on these comps.** Raw frames already
+  read flat vs perspective 12/12; adding the depth map cost Claude one answer
+  (it called the perspective planes FLAT). Depth earns its place on real
+  footage and per-node depth ordering, not on synthetic 2D comps; the
+  planner should reserve it for clip sources and explicit depth questions.
+- Only the remaining misses: count on `captions` (four text blocks plus a
+  bar, models under-count by one raw and over-count with marks) and the
+  `image` flat question, where a Ken Burns photo reads as FLAT to some
+  models under the depth view.
+
+Run again with `bin/cadence-vision eval` (replies are cached per model ×
+view under `vision/cache/eval/`); `--questions-only` prints the questions.
+
 ### Phases
 
 1. **Done:** profiles + `plan_view`, `keyframes` (uniform, scene, motion,
-   diverse), `contact_sheet`, `annotate` from the comp's node state, `diff`
-   (pixel, flow, depth), `scene_text` (nodes, motion, depth layers).
+   diverse, query via CLIP), `contact_sheet`, `annotate` from the comp's node
+   state with shaper-measured text boxes, `diff` (pixel, flow, depth),
+   `scene_text` (nodes, motion, depth layers), `native_video`.
 2. **Done:** `depth` via DA3 small/base/metric/mono on MPS, turbo colormap,
    side-by-side, sky fraction, the "frame is flat" signal, per-node depth.
 3. **Done (first cut):** `geometry` + `render_view` + layers with DA3-BASE
    multi-view, confidence filtering, back-projection, iso/top/side/front.
-   Still to do: real-footage keyframe validation with Claude and Gemini on
-   the eval suite; a `native_video` helper that actually clips and
-   re-encodes for Gemini/Qwen; text-box widths from parley instead of the
-   0.56·size estimate; CLIP-based `diverse` when a text query is given.
+   Plan 2 items all landed (shaper widths, eval harness with results above,
+   `native_video`, CLIP keyframes). Next: apply the eval findings to
+   `plan_view` (text first for comps, marks only for naming questions, depth
+   only for clips), rotated node boxes, and a real-footage question set.
 4. **Month, cuda-box:** streaming SLAM over long clips, 3DGS novel views,
    learned keyframe selectors (AKS, Q-Frame).
 

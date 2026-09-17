@@ -77,12 +77,12 @@ def probe(source: str) -> str:
 # ----------------------------------------------------------------------------- frames
 
 @mcp.tool()
-def keyframes(source: str, n: int = 6, strategy: str = "diverse", t0: float = -1, t1: float = -1) -> str:
-    """Pick n times from a source. strategy: uniform | scene (after cuts) | motion (energy-weighted) | diverse (coverage).
-    Optional window [t0, t1] in seconds."""
+def keyframes(source: str, n: int = 6, strategy: str = "diverse", t0: float = -1, t1: float = -1, query: str = "") -> str:
+    """Pick n times from a source. strategy: uniform | scene (after cuts) | motion (energy-weighted) | diverse (coverage)
+    | query (relevance to `query` + coverage, CLIP). Optional window [t0, t1] in seconds."""
     src = open_source(source)
     win = (t0, t1) if t0 >= 0 and t1 > t0 else None
-    r = KF.pick(src, n, strategy, win)
+    r = KF.pick(src, n, strategy, win, query or None)
     r["timestamps"] = [mmss(t) for t in r["times"]]
     return _j(r)
 
@@ -98,12 +98,12 @@ def frame(source: str, t: float = 0.0, profile: str = "claude") -> list:
 
 @mcp.tool()
 def contact_sheet(source: str, n: int = 6, strategy: str = "diverse", cols: int = 3, labels: str = "timestamp",
-                  profile: str = "claude", times: str = "") -> list:
+                  profile: str = "claude", times: str = "", query: str = "") -> list:
     """n frames tiled into one labeled image at the profile's long edge. labels: timestamp | index | seconds | none.
-    `times` (comma-separated seconds) overrides keyframe selection."""
+    `times` (comma-separated seconds) overrides keyframe selection; `query` with strategy=query picks by relevance."""
     src = open_source(source)
     pr = P.get_profile(profile)
-    ts = [float(x) for x in times.split(",") if x.strip()] if times else KF.pick(src, n, strategy)["times"]
+    ts = [float(x) for x in times.split(",") if x.strip()] if times else KF.pick(src, n, strategy, None, query or None)["times"]
     im = SH.from_source(src, ts, cols, labels, pr.long_edge_px)
     return [_j({"times": ts, "timestamps": [mmss(t) for t in ts], "cols": cols, "size": im.size,
                 "reading": "cells are numbered left-to-right, top-to-bottom; the label shows cell number and time"}),
@@ -148,6 +148,18 @@ def diff(source: str, t0: float, t1: float, mode: str = "pixel", source_b: str =
     else:
         im, stats = DF.pixel(a, b)
     return [_j({"t0": t0, "t1": t1, "mode": mode, **stats}), _png(fit(im, pr.long_edge_px), f"diff-{_name(src.media, srcb.media, t0, t1, mode)}.png")]
+
+
+@mcp.tool()
+def native_video(source: str, profile: str = "gemini", t0: float = 0.0, t1: float = -1, fps: float = 0.0,
+                 long_edge: int = 0, presample: bool = False, max_inline_mb: float = 20.0) -> str:
+    """Trim + scale + H.264 a source for models that ingest video natively (Gemini, Qwen3-VL). Returns the mp4 path,
+    size, a data URL when under max_inline_mb, and the request fragment for gemini (direct API), openrouter and
+    qwen/vLLM. presample=true re-times the clip to `fps` so every provider sees exactly those frames."""
+    from . import native as NV
+    src = open_source(source)
+    pr = P.get_profile(profile)
+    return _j(NV.prepare(src, pr, t0, t1 if t1 > 0 else src.duration, fps or pr.video.fps, long_edge or pr.long_edge_px, presample, max_inline_mb))
 
 
 # ----------------------------------------------------------------------------- text

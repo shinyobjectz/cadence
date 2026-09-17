@@ -22,3 +22,4 @@ pycolmap
 open3d
 addict
 matplotlib
+open_clip_torch  # CLIP keyframes (optional at runtime, falls back to pixel thumbnails)

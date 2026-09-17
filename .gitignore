@@ -48,3 +48,4 @@ model/out/
 # cadence-vision venv and rendered/derived views
 vision/.venv/
 vision/cache/
+vision/eval/out/

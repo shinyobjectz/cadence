@@ -34,6 +34,40 @@ local function enc(v)
 end
 local json = { encode = enc }
 
+-- text measurement through the scene rasterizer's C ABI (parley), no LÖVE needed.
+-- Falls back to nil (the Python side estimates) when the dylib is not built.
+local measure
+do
+  local ok, ffi = pcall(require, "ffi")
+  if ok then
+    ffi.cdef[[
+      int cs_font_load(const char *path);
+      int cs_text_measure(int font, float size, const char *text, float ls, float wrap, float leading, float *out);
+    ]]
+    local lib
+    for _, name in ipairs({ "libcadence_scene.dylib", "libcadence_scene.so", "cadence_scene.dll" }) do
+      local okl, l = pcall(ffi.load, root .. "/native/release/" .. name)
+      if okl then lib = l; break end
+    end
+    if lib then
+      local font_ids, buf = {}, ffi.new("float[2]")
+      local function font_id(path)
+        if not path then return 0 end
+        if font_ids[path] then return font_ids[path] end
+        local p = path:match("^/") and path or (root .. "/" .. path)
+        local id = lib.cs_font_load(p)
+        if id < 0 then id = 0 end
+        font_ids[path] = id
+        return id
+      end
+      measure = function(fontpath, size, text, ls, wrap, leading)
+        if lib.cs_text_measure(font_id(fontpath), size, text, ls or 0, wrap or 0, leading or 0, buf) ~= 0 then return nil end
+        return buf[0], buf[1]
+      end
+    end
+  end
+end
+
 -- determinism sandbox, same spirit as the renderer
 math.randomseed(0)
 local chunk = assert(loadfile(comp_path))
@@ -70,6 +104,12 @@ for i = 3, #arg do
         end
         st[p] = v
       end
+    end
+    if n.kind == "text" and measure then
+      local text = n:get("text") or n.initial.text or ""
+      local tw, th = measure(n:get("font"), n:get("size") or 32, text, n:get("tracking") or 0,
+        n.initial.wrap or 0, n.initial.leading or 0)
+      if tw then st.tw, st.th = tw, th end
     end
     row[n.id] = st
   end

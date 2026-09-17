@@ -3,6 +3,7 @@
 #   bin/cadence-vision                 # stdio MCP server (what .mcp.json launches)
 #   bin/cadence-vision call TOOL k=v   # run one tool from the shell, images land in vision/cache/
 #   bin/cadence-vision test            # smoke tests
+#   bin/cadence-vision eval [...]      # ask real models under each view condition (OPENROUTER_API_KEY)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$ROOT/vision/.venv/bin/python"
@@ -12,5 +13,6 @@ case "${1:-serve}" in
   serve) exec "$PY" -m cadence_vision.server ;;
   call) shift; exec "$PY" "$ROOT/vision/cli.py" "$@" ;;
   test) shift; exec "$PY" -m pytest -q "$ROOT/vision/tests" "$@" ;;
-  *) echo "usage: cadence-vision [serve|call TOOL k=v...|test]" >&2; exit 2 ;;
+  eval) shift; exec "$PY" -m cadence_vision.evalrun "$@" ;;
+  *) echo "usage: cadence-vision [serve|call TOOL k=v...|test|eval]" >&2; exit 2 ;;
 esac

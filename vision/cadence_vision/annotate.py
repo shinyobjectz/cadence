@@ -52,8 +52,11 @@ def node_boxes(comp: Path, t: float) -> dict:
             size = float(st.get("size", 24) or 24) * sc
             txt = str(st.get("text", "") or "")
             lines = txt.split("\n")
-            w = max((len(l) for l in lines), default=0) * size * 0.56
-            h = size * 1.2 * max(1, len(lines))
+            if st.get("tw") is not None:      # measured by the scene rasterizer's shaper (props.lua)
+                w, h = float(st["tw"]) * sc, float(st["th"]) * sc
+            else:
+                w = max((len(l) for l in lines), default=0) * size * 0.56
+                h = size * 1.2 * max(1, len(lines))
             if m.get("anchor") == "center":
                 box = (x - w / 2, y - h / 2, w, h)
             else:

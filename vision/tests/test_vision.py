@@ -68,12 +68,12 @@ def test_keyframe_strategies_synthetic(tmp_path):
 
     import cadence_vision.keyframes as kf
     kf.scan = lambda src, sample_fps=4.0, edge=160: (times, frames)   # monkeypatch the strip
-    r = kf.pick(S(), 3, "scene")
+    r = kf.pick(S(), 3, "scene", use_clip=False)
     assert r["scores"]["cuts_at"] == [10.0, 20.0]
     assert r["times"][:3] == [0.0, 10.0, 20.0]
-    r = kf.pick(S(), 4, "motion")
+    r = kf.pick(S(), 4, "motion", use_clip=False)
     assert sum(10 <= t < 20 for t in r["times"]) >= 2, "motion strategy should favour the moving shot"
-    r = kf.pick(S(), 3, "diverse")
+    r = kf.pick(S(), 3, "diverse", use_clip=False)
     assert len(set(int(t // 10) for t in r["times"])) == 3, "diverse should cover all three looks"
     r = kf.pick(S(), 5, "uniform")
     assert r["times"] == [3.0, 9.0, 15.0, 21.0, 27.0]
