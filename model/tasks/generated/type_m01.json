@@ -1,0 +1,20 @@
+{
+  "id": "type_m01",
+  "comp": "evals/cases/type.lua",
+  "instruction": "Change the easing of the `kicker` tween that animates opacity from sineOut to backOut.",
+  "reference": "<<<<<<< SEARCH\nt:tween(kicker, 0.35, { opacity = 1 }, \"sineOut\")\n=======\nt:tween(kicker, 0.35, { opacity = 1 }, \"backOut\")\n>>>>>>> REPLACE\n",
+  "checks": {
+    "compile": false,
+    "no_new_lint_errors": false,
+    "props": [],
+    "frames_change": [],
+    "frames_hold": [
+      0.0
+    ],
+    "match_reference_frames": 1.0
+  },
+  "tags": [
+    "synthetic"
+  ],
+  "source": null
+}

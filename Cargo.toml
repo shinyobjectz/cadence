@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cli", "decode", "html", "layout", "vector", "effects", "embed", "scene3d", "scene"]
+members = ["cli", "decode", "html", "layout", "vector", "effects", "embed", "scene3d", "scene", "model"]
 exclude = ["spikes/blitz_spike", "spikes/vello_spike", "desktop/src-tauri"]
 default-members = ["cli", "decode", "html", "layout", "vector", "effects", "scene3d", "scene"]
 

@@ -1,0 +1,36 @@
+[package]
+name = "cadence-model"
+version = "0.1.0"
+edition = "2021"
+description = "Cadence editor model: promptable editing agent over Lua comps, hosted from Rust (candle / ort / mlx), with a validation harness"
+
+[[bin]]
+name = "cadence-model"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+
+tokenizers = { version = "0.23", optional = true }
+candle-core = { version = "0.11", optional = true }
+candle-nn = { version = "0.11", optional = true }
+candle-transformers = { version = "0.11", optional = true }
+ort = { version = "2.0.0-rc.13", optional = true }
+mlx-rs = { version = "0.32", optional = true }
+
+[features]
+default = []
+# candle: Qwen2-family safetensors on CPU; `metal` for the Mac, `cuda` for cuda-box (WSL2)
+candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers"]
+metal = ["candle", "candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+cuda = ["candle", "candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+# ort: an optimum-exported decoder (model.onnx with past_key_values); `ort-cuda` for the CUDA EP
+ort = ["dep:ort", "dep:tokenizers"]
+ort-cuda = ["ort", "ort/cuda"]
+# mlx: Apple silicon via mlx-rs (Qwen2 forward pass implemented in src/backend/mlx.rs)
+mlx = ["dep:mlx-rs", "dep:tokenizers"]

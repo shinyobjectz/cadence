@@ -1,0 +1,8 @@
+{
+  "id": "primitives_duration_trap",
+  "comp": "evals/cases/primitives.lua",
+  "instruction": "Stretch the title reveal to 1.4 seconds. The comp duration is static (2s) and the script already runs 1.8s, so extend `duration` in the header to 2.5 as well.",
+  "reference": "<<<<<<< SEARCH\n  width = 1280, height = 720, duration = 2, fps = 30,\n=======\n  width = 1280, height = 720, duration = 2.5, fps = 30,\n>>>>>>> REPLACE\n<<<<<<< SEARCH\n        function() t:tween(title, 0.7, { opacity = 1, size = 96 }, \"backOut\") end\n=======\n        function() t:tween(title, 1.4, { opacity = 1, size = 96 }, \"backOut\") end\n>>>>>>> REPLACE\n",
+  "checks": { "compile": true, "no_new_lint_errors": true, "props": [ { "node": "text4", "t": 2.4, "prop": "opacity", "op": ">=", "value": 0.99 } ], "frames_hold": [0.0], "match_reference_frames": 1.0 },
+  "tags": ["hand", "duration", "trap"]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "primitives_title_no_overshoot",
+  "comp": "evals/cases/primitives.lua",
+  "instruction": "Lint flags overshoot_on_opacity on the title: its opacity tween uses backOut. Fix it by easing that tween with sineOut instead. Keep the size growth.",
+  "reference": "<<<<<<< SEARCH\n        function() t:tween(title, 0.7, { opacity = 1, size = 96 }, \"backOut\") end\n=======\n        function() t:tween(title, 0.7, { opacity = 1, size = 96 }, \"sineOut\") end\n>>>>>>> REPLACE\n",
+  "checks": { "compile": true, "no_new_lint_errors": true, "props": [ { "node": "text4", "t": 1.8, "prop": "opacity", "op": ">=", "value": 0.99 } ], "frames_hold": [0.0], "match_reference_frames": 1.0 },
+  "tags": ["hand", "lint-fix", "ease"]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "primitives_slab_faster",
+  "comp": "evals/cases/primitives.lua",
+  "instruction": "Make the slab's slide faster: 0.6 seconds instead of 1.1. Leave the disc tween alone.",
+  "reference": "<<<<<<< SEARCH\n        function() t:tween(slab, 1.1, { x = 180, rotation = 0.18, rx = 64, color = \"#f2b33d\" }, \"quadOut\") end\n=======\n        function() t:tween(slab, 0.6, { x = 180, rotation = 0.18, rx = 64, color = \"#f2b33d\" }, \"quadOut\") end\n>>>>>>> REPLACE\n",
+  "checks": { "compile": true, "no_new_lint_errors": true, "props": [ { "node": "rect3", "t": 0.6, "prop": "x", "op": "==", "value": 180 } ], "frames_hold": [0.0], "frames_change": [0.5], "match_reference_frames": 1.0 },
+  "tags": ["hand", "duration"]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "captions_m02",
+  "comp": "evals/cases/captions.lua",
+  "instruction": "In the `speaker` tween, animate `opacity` to 0.5 instead of 1.",
+  "reference": "<<<<<<< SEARCH\nfunction() t:tween(speaker, 0.3, { opacity = 1 }, \"sineOut\") end\n=======\nfunction() t:tween(speaker, 0.3, { opacity = 0.5 }, \"sineOut\") end\n>>>>>>> REPLACE\n",
+  "checks": {
+    "compile": false,
+    "no_new_lint_errors": false,
+    "props": [],
+    "frames_change": [],
+    "frames_hold": [
+      0.0
+    ],
+    "match_reference_frames": 1.0
+  },
+  "tags": [
+    "synthetic"
+  ],
+  "source": null
+}

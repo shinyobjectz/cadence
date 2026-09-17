@@ -1,0 +1,20 @@
+{
+  "id": "primitives_m01",
+  "comp": "evals/cases/primitives.lua",
+  "instruction": "Change the easing of the `disc` tween that animates r/opacity from sineOut to sineInOut.",
+  "reference": "<<<<<<< SEARCH\nfunction() t:tween(disc, 0.7, { r = 64, opacity = 0.85 }, \"sineOut\") end\n=======\nfunction() t:tween(disc, 0.7, { r = 64, opacity = 0.85 }, \"sineInOut\") end\n>>>>>>> REPLACE\n",
+  "checks": {
+    "compile": false,
+    "no_new_lint_errors": false,
+    "props": [],
+    "frames_change": [],
+    "frames_hold": [
+      0.0
+    ],
+    "match_reference_frames": 1.0
+  },
+  "tags": [
+    "synthetic"
+  ],
+  "source": null
+}

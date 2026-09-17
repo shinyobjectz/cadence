@@ -1,0 +1,8 @@
+{
+  "id": "primitives_disc_white",
+  "comp": "evals/cases/primitives.lua",
+  "instruction": "The disc should end up white (#ffffff) instead of pink at the end of its first move.",
+  "reference": "<<<<<<< SEARCH\n        function() t:tween(disc, 1.1, { x = 560, r = 96, color = \"#e85aa8\" }, \"cubicInOut\") end\n=======\n        function() t:tween(disc, 1.1, { x = 560, r = 96, color = \"#ffffff\" }, \"cubicInOut\") end\n>>>>>>> REPLACE\n",
+  "checks": { "compile": true, "no_new_lint_errors": true, "props": [ { "node": "circle2", "t": 1.1, "prop": "color", "op": "==", "value": [1, 1, 1, 1] } ], "frames_hold": [0.0], "match_reference_frames": 1.0 },
+  "tags": ["hand", "color"]
+}
