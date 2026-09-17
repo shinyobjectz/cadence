@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Runs INSIDE WSL on cuda-box. Launched detached from Windows by
-# model/scripts/cuda-box.sh (`start "" /b cmd /c "wsl -e bash /mnt/c/Users/PC/wsl-job.sh <job> ..."`),
+# model/scripts/cuda-box.sh (a scheduled task runs `wsl -e bash /mnt/c/Users/PC/wsl-job.sh <job> ...`),
 # so no command text crosses the cmd → wsl → bash quoting boundary.
 #   wsl-job.sh build
 #   wsl-job.sh model REPO_ID NAME
 #   wsl-job.sh bench NAME [TOKENS]
 #   wsl-job.sh generate NAME TASKS_DIR RUN
 set -uo pipefail
-export PATH="$HOME/micromamba/envs/cu/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="$HOME/micromamba/envs/cu/bin:$HOME/.cargo/bin:$HOME/.local/bin:/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export CUDA_HOME="$HOME/micromamba/envs/cu"
 export LD_LIBRARY_PATH="/usr/lib/wsl/lib:$HOME/micromamba/envs/cu/lib:${LD_LIBRARY_PATH:-}"
+# RTX 4070 = Ada, compute 8.9; candle's build script otherwise shells out to nvidia-smi
+export CUDA_COMPUTE_CAP="${CUDA_COMPUTE_CAP:-89}"
 cd "$HOME/cadence" || exit 1
 job="${1:-}"; shift || true
 echo "[wsl-job] $(date -Is) $job $*"
@@ -20,8 +22,8 @@ case "$job" in
   model)
     repo="${1:?REPO_ID}"; name="${2:-$(basename "$repo")}"
     mkdir -p "$HOME/models"
-    command -v huggingface-cli >/dev/null || pip install -q -U huggingface_hub
-    HF_XET_HIGH_PERFORMANCE=1 huggingface-cli download "$repo" --local-dir "$HOME/models/$name"
+    python3 -c "import huggingface_hub" 2>/dev/null || pip install -q -U huggingface_hub
+    HF_XET_HIGH_PERFORMANCE=1 python3 -c "import sys; from huggingface_hub import snapshot_download; print(snapshot_download(sys.argv[1], local_dir=sys.argv[2]))" "$repo" "$HOME/models/$name"
     ;;
   bench)
     name="${1:?NAME}"

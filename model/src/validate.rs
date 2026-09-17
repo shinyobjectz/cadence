@@ -165,7 +165,8 @@ pub fn facts(comp: &Path) -> Result<Facts> {
 pub fn scratch_comp(original: &Path, source: &str, tag: &str) -> Result<PathBuf> {
     let dir = original.parent().unwrap_or(Path::new("."));
     let stem = original.file_stem().and_then(|s| s.to_str()).unwrap_or("comp");
-    let p = dir.join(format!(".{stem}.{tag}.model.lua"));
+    // pid in the name: concurrent runs (two evals, gen-tasks beside an eval) must not share scratch files
+    let p = dir.join(format!(".{stem}.{tag}.{}.model.lua", std::process::id()));
     std::fs::write(&p, source)?;
     Ok(p)
 }

@@ -21,10 +21,11 @@ WSL='wsl -e bash -lc'
 # absolute PATH: the quoting through cmd.exe → wsl → bash loses $PATH expansions
 PREFIX='export PATH=$HOME/micromamba/envs/cu/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export CUDA_HOME=$HOME/micromamba/envs/cu; export LD_LIBRARY_PATH=/usr/lib/wsl/lib:$HOME/micromamba/envs/cu/lib; cd ~/cadence'
 run() { cuda-box run "$WSL \"$PREFIX; $*\""; }
-# detached jobs: `cuda-box train` is the CLI's proven detach path (uploads a
-# .py, starts it with `start "" /b`, logs to C:\Users\PC\runs\<name>.log). The
-# .py just execs the WSL job script with its arguments baked in, so no command
-# text crosses the cmd → wsl → bash quoting boundary.
+# detached jobs: a Windows scheduled task (the only launch that survives the
+# ssh session here — `start /b` from an ssh command dies with it). The task
+# runs a tiny .py that execs the WSL job script with its arguments baked in,
+# so no command text crosses the cmd → wsl → bash quoting boundary.
+# Logs: C:\Users\PC\runs\cm-<job>.log (`cuda-box logs cm-<job>` / `log`).
 JOB_LOCAL="$ROOT/model/scripts/wsl-job.sh"
 spawn() { # spawn <job> [args...]
   local job="$1"; local py="/tmp/cm-$job.py"
@@ -37,7 +38,8 @@ open(py, "w").write(
     f"args = {json.dumps(args)}\n"
     "sys.exit(subprocess.call(['wsl', '-e', 'bash', '/mnt/c/Users/PC/wsl-job.sh', *args]))\n")
 PY
-  cuda-box train "$py" -n "cm-$job" | head -1
+  cuda-box put "$py" "C:\Users\PC\runs\cm-$job.py" >/dev/null
+  cuda-box run "schtasks /Create /TN cm-$job /TR \"cmd /c python C:\\Users\\PC\\runs\\cm-$job.py > C:\\Users\\PC\\runs\\cm-$job.log 2>&1\" /SC ONCE /ST 00:00 /F >NUL & schtasks /Run /TN cm-$job" | grep -v WARNING
 }
 cmd="${1:-}"; shift || true
 case "$cmd" in
