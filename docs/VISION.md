@@ -7,6 +7,11 @@ out of reach). The bet is the opposite one: keep the frontier VLM/video model
 as the editor, and build **one MCP server** that turns Cadence frames and
 source clips into whatever that model reads best, including real 3D data.
 
+The layer above this one — the event-calculus fact log that both the comp and
+the clip are written into, and that lowers edits back to Lua — is
+`docs/FACTS.md`. This document is about presenting pixels to a model; that one
+is about what the model reads and writes instead.
+
 ## What we measured
 
 Depth Anything 3 (ByteDance Seed, Nov 2025) runs on the Mac today. The

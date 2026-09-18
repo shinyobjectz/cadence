@@ -12,6 +12,7 @@ from PIL import Image
 
 from . import CACHE
 from .depth import quiet, device
+from .profile import timed
 
 MODEL = ("ViT-B-32", "laion2b_s34b_b79k")
 
@@ -25,6 +26,7 @@ def available() -> bool:
 
 
 @lru_cache(maxsize=1)
+@timed("clip.load")
 def _load():
     import open_clip
     import torch
@@ -36,6 +38,7 @@ def _load():
     return model, pre, tok, dev, torch
 
 
+@timed("clip.embed_frames")
 def embed_frames(frames: np.ndarray, batch: int = 64) -> np.ndarray:
     """frames [N,h,w,3] uint8 -> unit vectors [N,512] float32."""
     model, pre, _, dev, torch = _load()

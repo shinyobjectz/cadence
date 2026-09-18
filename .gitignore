@@ -49,3 +49,7 @@ model/out/
 vision/.venv/
 vision/cache/
 vision/eval/out/
+
+# Python bytecode (cadence-vision)
+__pycache__/
+*.pyc

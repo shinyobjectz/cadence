@@ -32,19 +32,51 @@ def _tkey(t: float) -> str:
     return f"{t:.4f}"
 
 
+def _parent_frame(nid: str, row: dict, meta: dict, cache: dict) -> tuple[float, float, float, float]:
+    """(ox, oy, scale, opacity) the parent chain contributes to `nid`.
+
+    A child's x/y are relative to its parent's origin and are scaled by it, so a node whose parent
+    moves moves with it. Without this a parented node's box is in parent-local space, which puts
+    every mark and every region in the wrong place."""
+    if nid in cache:
+        return cache[nid]
+    pid = (meta.get(nid) or {}).get("parent")
+    if not pid or pid not in row:
+        cache[nid] = (0.0, 0.0, 1.0, 1.0)
+        return cache[nid]
+    pox, poy, psc, pop = _parent_frame(pid, row, meta, cache)
+    pst, pm = row[pid], meta.get(pid, {})
+    px, py = float(pst.get("x", 0) or 0), float(pst.get("y", 0) or 0)
+    sc = float(pst.get("scale", 1) or 1)
+    ox, oy = pox + px * psc, poy + py * psc
+    if pm.get("anchor") == "center":          # a centred parent's origin is its top-left corner
+        ox -= float(pst.get("w", 0) or 0) * psc * sc / 2
+        oy -= float(pst.get("h", 0) or 0) * psc * sc / 2
+    cache[nid] = (ox, oy, psc * sc, pop * float(pst.get("opacity", 1) or 1))
+    return cache[nid]
+
+
 def node_boxes(comp: Path, t: float) -> dict:
     """Approximate screen boxes {id: {x,y,w,h,kind,z,opacity,...}} at time t, comp pixel space."""
     d = props(comp, [t])
+    return boxes_at(d, t)
+
+
+def boxes_at(d: dict, t: float) -> dict:
+    """node_boxes for an already-fetched props dict (so a caller sampling many times pays once)."""
     row = d["at"][_tkey(t)]
     meta = {n["id"]: n for n in d["nodes"]}
+    cache: dict = {}
     out = {}
     for nid, st in row.items():
         m = meta.get(nid, {})
         kind = m.get("kind", "?")
         if kind in ("audio", "tts", "sfx", "music", "script", "world", "light"):
             continue
-        x, y = float(st.get("x", 0) or 0), float(st.get("y", 0) or 0)
-        sc = float(st.get("scale", 1) or 1)
+        ox, oy, psc, pop = _parent_frame(nid, row, meta, cache)
+        x = ox + float(st.get("x", 0) or 0) * psc
+        y = oy + float(st.get("y", 0) or 0) * psc
+        sc = float(st.get("scale", 1) or 1) * psc
         if kind == "circle":
             r = float(st.get("r", 0) or 0) * sc
             box = (x - r, y - r, 2 * r, 2 * r)
@@ -70,7 +102,8 @@ def node_boxes(comp: Path, t: float) -> dict:
                 box = (x, y, w, h)
         entry = {"kind": kind, "z": m.get("z"), "parent": m.get("parent"), "src": m.get("src"),
                  "x": round(box[0], 1), "y": round(box[1], 1), "w": round(box[2], 1), "h": round(box[3], 1),
-                 "opacity": st.get("opacity", 1), "rotation": st.get("rotation", 0), "scale": st.get("scale", 1)}
+                 "opacity": float(st.get("opacity", 1) or 1) * pop, "rotation": st.get("rotation", 0),
+                 "scale": sc}
         if "text" in st:
             entry["text"] = st["text"]
         if "color" in st:

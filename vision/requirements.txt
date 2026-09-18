@@ -23,3 +23,15 @@ open3d
 addict
 matplotlib
 open_clip_torch  # CLIP keyframes (optional at runtime, falls back to pixel thumbnails)
+
+# Perception producers (cadence_vision.perceive and friends). Each is imported lazily inside the
+# producer that needs it, so a missing one costs that producer's facts, not the whole log.
+ultralytics        # YOLO-World seeds + SAM 2 propagation (tracking.py)
+torchaudio         # MMS forced alignment: word times to ~15 ms (audiofacts.py)
+transformers>=5.0  # EdgeTAM video tracking (segtrack.py), the default tracker
+faster-whisper     # transcription — used to learn *what* was said, never when
+librosa            # beats, onsets, loudness
+soundfile
+speechbrain        # ECAPA speaker embeddings for diarization (diarize.py); pyannote's
+                   # own models are gated behind an account and 403 without one
+rapidocr-onnxruntime  # on-screen text in footage (ocr.py); onnxruntime, no torch

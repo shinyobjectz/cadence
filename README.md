@@ -20,6 +20,37 @@
 
 Cadence is a seek-not-playback motion framework: compositions are pure functions of time. Agents author `.lua` files; the renderer evaluates any frame in any order; verification runs in milliseconds before you ever encode.
 
+## Watch: how Cadence works
+
+<p align="center">
+  <a href="docs/media/how-cadence-works.mp4">
+    <img src="docs/media/how-cadence-works.jpg" alt="How Cadence Works: play the 2:40 video" width="100%" />
+  </a>
+</p>
+
+**Start here.** A 2:40 lesson that goes one layer deeper at each step: a comp as a function of time,
+seeking any frame, declaring motion instead of drawing it, determinism and frame hashes, then the
+fact log, perception and edits written back into the Lua. It was rendered by Cadence from
+[`comps/lesson/how-cadence-works.lua`](comps/lesson/how-cadence-works.lua).
+[▶ Play the video](docs/media/how-cadence-works.mp4)
+
+## Watch: facts on real footage
+
+<p align="center">
+  <a href="docs/media/facts-on-footage.mp4">
+    <img src="docs/media/facts-on-footage.jpg" alt="Facts on footage: play the 1:46 video" width="100%" />
+  </a>
+</p>
+
+What the fact log looks like on a real clip, and how an agent works with it. A stock shot of a
+bottle changing hands is perceived into facts, and every overlay is drawn from one of them:
+tracker boxes, the third of the frame an object is in, its direction and speed, and the moment of
+release. Then an agent edits a comp from the log alone: it asks when the release happens, asserts
+a caption there, and proves the edit by hashing every frame (100 of 358 changed, in exactly two
+windows). Rendered from [`comps/agent/facts-on-footage.lua`](comps/agent/facts-on-footage.lua);
+the grammar is in [`docs/FACTS.md`](docs/FACTS.md).
+[▶ Play the video](docs/media/facts-on-footage.mp4)
+
 ## Quick start
 
 ```bash

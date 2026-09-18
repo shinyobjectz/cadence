@@ -9,6 +9,8 @@ import io
 import json
 from typing import Optional
 
+from pathlib import Path
+
 import numpy as np
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.types import Image as McpImage
@@ -22,12 +24,16 @@ from . import annotate as AN
 from . import diff as DF
 from . import scene_text as ST
 from .sources import open_source, frame_at, fit, mmss
+from . import facts as FA
+from . import perceive as PC
+from . import query as QY
+from . import edits as ED
 
 mcp = MCPServer("cadence-vision", instructions=(
     "Renders Cadence comps (.lua), video files and images into views a vision/video model reads well. "
     "Start with describe_model(profile) and plan_view(source, profile, question); then call the planned tools. "
     "Images come back sized for the profile. Marks drawn on frames are numbered; the legend maps numbers to "
-    "Cadence node ids so answers can name real nodes."))
+    "Cadence node ids so answers can name real nodes. The fact_* tools are the non-visual surface: fact_log turns a comp or clip into the event-calculus log, fact_query pattern-matches it, fact_at reads one instant, and fact_edit rewrites a comp from an assertion and proves the blast radius."))
 
 
 def _png(im: Image.Image, name: str) -> McpImage:
@@ -250,6 +256,141 @@ def render_view(geometry_id: str, camera: str = "iso", size: int = 900, show_cam
                 "reading": {"top": "looking down: x right, depth (z) up the image", "side": "from the right: depth right, y down",
                             "front": "the source camera's view", "iso": "rotated 35° about y and 25° about x"}[camera if camera in ("top", "side", "front") else "iso"]}),
             _png(im, f"view-{geometry_id}-{camera}.png")]
+
+
+# ----------------------------------------------------------------------------- facts
+
+@mcp.tool()
+def fact_log(source: str, prompts: str = "", refresh: bool = False, contact: bool = False,
+             words: bool = False, beats: bool = False) -> str:
+    """The fact log for a source. A .lua comp is *lifted* (exact, no src lines); a video is
+    *perceived* (every line carries src(Fact, Producer, Conf)). Perceiving is minutes, so the
+    result is cached against the file's size+mtime; refresh=True recomputes.
+    `prompts` is a comma-separated seed list for detection on video (e.g. "person,bottle").
+    words=True force-aligns every audio clip that declares its own text, so the log carries
+    happens(word(...)) and an edit can be anchored to something that was said; beats=True adds
+    tempo, beat grid and onsets. Both are measured, so both carry src() even in a lifted log."""
+    src = Path(source)
+    if not src.exists():
+        return _j({"error": f"no such source: {source}"})
+    st = src.stat()
+    is_comp = src.suffix == ".lua"
+    # words/beats change what a *lift* emits; perceiving a video always runs its audio
+    # producers, so for a video they must not change the key -- if they did, a later
+    # fact_when on the same clip missed the cache and started a fresh perception.
+    key = _name(src.resolve(), st.st_size, int(st.st_mtime), prompts, contact,
+                *((words, beats) if is_comp else ()))
+    cached = CACHE / f"facts-{key}.facts"
+    latest = CACHE / f"facts-latest-{_name(src.resolve(), st.st_size, int(st.st_mtime))}.facts"
+    plist = [p.strip() for p in prompts.split(",") if p.strip()]
+    if cached.exists() and not refresh:
+        text = cached.read_text()
+    elif is_comp:
+        text = FA.lift(src, want_words=words, want_beats=beats)
+        cached.write_text(text)
+    elif not plist and latest.exists() and not refresh:
+        # A query that names no prompts means "what do we already know about this clip".
+        text = latest.read_text()
+    elif not plist:
+        return _j({"error": f"{source} has not been perceived yet; call fact_log with prompts "
+                            f'naming what to track, e.g. prompts="person,bottle"'})
+    else:
+        text = PC.perceive(src, plist, want_contact=contact, want_audio=True)
+        cached.write_text(text)
+    if not is_comp:
+        latest.write_text(text)
+    lg = QY.Log.parse(text, src.stem)
+    return _j({"source": source, "kind": "lifted" if src.suffix == ".lua" else "perceived",
+               "exact": src.suffix == ".lua" and not (words or beats),
+               "facts": len(lg.body), "entities": lg.entities(),
+               "transcript": lg.transcript(), "cache": str(cached), "log": text})
+
+
+@mcp.tool()
+def fact_query(pattern: str, sources: str, min_conf: float = 0.0, limit: int = 60) -> str:
+    """Query fact logs by pattern, in the grammar the logs are written in. A capitalised atom
+    is a variable and `_` matches anything, so `happens(release(A, B), T)` finds every handover
+    and reports A, B and T. A quoted string is always a literal. `sources` is a comma-separated
+    list of .facts files, comps or videos (anything fact_log accepts). min_conf drops perceived
+    hits below a confidence; exact facts are never dropped."""
+    logs = []
+    for item in [x.strip() for x in sources.split(",") if x.strip()]:
+        p = Path(item)
+        if p.suffix == ".facts":
+            logs.append(QY.Log.load(p))
+        else:
+            got = json.loads(fact_log(item))
+            if "error" in got:
+                return _j(got)
+            logs.append(QY.Log.parse(got["log"], p.stem))
+    try:
+        hits = QY.Corpus(logs).match(pattern, min_conf)
+    except Exception as ex:                                    # noqa: BLE001
+        return _j({"error": f"bad pattern {pattern!r}: {ex}"})
+    return _j({"pattern": pattern, "searched": [l.name for l in logs], "n": len(hits),
+               "clips": sorted({h.clip for h in hits}),
+               "hits": [h.as_dict() for h in hits[:limit]],
+               "truncated": max(0, len(hits) - limit)})
+
+
+@mcp.tool()
+def fact_at(source: str, t: float, eps: float = 0.04) -> str:
+    """Everything the log says is true at time t: every holds() interval containing t, and every
+    happens() within eps of it. The point-in-time view an agent needs before editing at a time."""
+    p = Path(source)
+    if p.suffix == ".facts":
+        text = p.read_text()
+    else:
+        got = json.loads(fact_log(source))
+        if "error" in got:
+            return _j(got)
+        text = got["log"]
+    lg = QY.Log.parse(text, p.stem)
+    return _j({"source": source, "t": t,
+               "holds": [h.as_dict() for h in lg.at(t, eps) if h.fact[0] == "holds"],
+               "happens": [h.as_dict() for h in lg.at(t, eps) if h.fact[0] == "happens"]})
+
+
+@mcp.tool()
+def fact_when(source: str, word: str = "", event: str = "", words: bool = True) -> str:
+    """When something was said, or when an audio event happened. `word` matches a spoken word
+    (trailing punctuation ignored, so "Lua" finds "Lua."); `event` matches an event name such as
+    beat, onset, action_boundary or speaker_change. Returns the times, which are what you hand to
+    fact_edit to anchor an edit to speech or to music instead of to a guessed number."""
+    p = Path(source)
+    if p.suffix == ".facts":
+        lg = QY.Log.parse(p.read_text(), p.stem)
+    else:
+        got = json.loads(fact_log(source, words=words, beats=bool(event)))
+        if "error" in got:
+            return _j(got)
+        lg = QY.Log.parse(got["log"], p.stem)
+    out = {"source": source}
+    if word:
+        out["word"] = word
+        out["times"] = lg.when(word=word)
+    if event:
+        out["event"] = event
+        out["times"] = sorted(set(out.get("times", []) + lg.when(event=event)))
+    if not word and not event:
+        out["transcript"] = lg.transcript()
+    return _j(out)
+
+
+@mcp.tool()
+def fact_edit(comp: str, edits: str, verify: str = "facts", write: bool = False) -> str:
+    """Edit a comp by asserting what should be true. `edits` is a JSON list like
+    [{"verb":"set_cue","node":"text6","index":0,"t0":0.85}]; verbs are set_prop, set_ease,
+    set_tween_duration, set_cue. verify="facts" lifts before and after and diffs the logs;
+    verify="frames" also renders both and hashes every frame, which is the only way to prove
+    the edit touched nothing else. write defaults to False -- propose and inspect first."""
+    try:
+        parsed = json.loads(edits)
+    except json.JSONDecodeError as ex:
+        return _j({"ok": False, "problems": [f"edits is not valid JSON: {ex}"]})
+    if not isinstance(parsed, list):
+        parsed = [parsed]
+    return _j(ED.apply(comp, parsed, verify=verify, write=write))
 
 
 def main():

@@ -15,6 +15,14 @@ return e.comp {
       at = 0, duration = 3, media_start = 4,
       volume = 0.7, fade_in = 0.25, fade_out = 0.4,
     }
+    -- A second clip at a NON-ZERO `at`. Delayed audio goes through adelay, which
+    -- amix used to turn into a few ms of nothing while the render still reported
+    -- success; the case only ever covered at = 0, so nothing caught it. Keep this.
+    s:audio {
+      src = "evals/assets/piano.ogg",
+      at = 1.0, duration = 1.5, media_start = 20,
+      volume = 0.35, fade_in = 0.1, fade_out = 0.2,
+    }
     s:rect { x = 0, y = 540, w = 1280, h = 180, color = "#000000aa" }
     s:text { x = 48, y = 36, text = "20  AUDIO MIX", size = 22, color = "#ffffffcc" }
     s:text {

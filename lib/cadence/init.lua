@@ -807,8 +807,18 @@ function Comp:compile(hooks, inputs_map)
   if hooks and hooks.post_script then hooks.post_script(self, rec) end
   for _, n in ipairs(s.nodes) do
     if n.initial.cues then
-      for _, cue in ipairs(n.initial.cues) do
+      -- A cue's t1 only means something if something clears the text at it. Recording
+      -- the start alone makes a cue hold until the next one begins, and the last cue
+      -- hold to the end of the comp -- so a readout from one chapter stayed on screen
+      -- through the next. Contiguous cues are unaffected: the clear is only recorded
+      -- when a real gap follows, so nothing that already abutted changes.
+      local cues = n.initial.cues
+      for i, cue in ipairs(cues) do
         tl:record_step(n, "text", cue.t0, cue.text)
+        local nxt = cues[i + 1]
+        if cue.t1 and cue.t1 > cue.t0 and (not nxt or nxt.t0 > cue.t1 + 1e-6) then
+          tl:record_step(n, "text", cue.t1, "")
+        end
       end
     end
   end

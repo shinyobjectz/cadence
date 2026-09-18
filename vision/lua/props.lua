@@ -75,7 +75,7 @@ local comp = chunk()
 assert(type(comp) == "table" and comp.compile, "comp did not return e.comp{}")
 comp:compile()
 
-local PROPS = { "x", "y", "w", "h", "r", "rx", "size", "opacity", "rotation", "scale",
+local PROPS = { "x", "y", "w", "h", "r", "rx", "size", "opacity", "rotation", "scale", "volume",
   "color", "text", "reveal", "progress", "tracking", "weight", "outline",
   "fx_bloom", "fx_glow", "fx_blur", "fx_vignette", "fx_chroma", "fx_grain",
   "effect_blur", "effect_hue_rotate", "effect_saturate", "effect_brightness", "effect_contrast" }
@@ -85,8 +85,9 @@ local out = { fps = comp.fps or 30, duration = comp.duration, width = comp.width
 for z, n in ipairs(comp.nodes) do
   local i = n.initial or {}
   out.nodes[#out.nodes + 1] = setmetatable({ id = n.id, kind = n.kind, z = z,
-    parent = n.parent and n.parent.id or nil, src = i.src, anchor = i.anchor, wrap = i.wrap,
-    from = i.from, dur = i.duration }, { __jsontype = "object" })
+    parent = i.parent and i.parent.id or nil, src = i.src, anchor = i.anchor, wrap = i.wrap,
+    from = i.from, dur = i.duration, at = i.at, media_start = i.media_start,
+    fade_in = i.fade_in, fade_out = i.fade_out, volume = i.volume }, { __jsontype = "object" })
 end
 for i = 3, #arg do
   local t = tonumber(arg[i])

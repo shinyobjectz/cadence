@@ -271,7 +271,10 @@ local function tts_generate(i, want_align)
     local has_eleven_key = pcall(elevenlabs_key)
     if provider ~= "" or not has_eleven_key then
       local abin = cadence_audio_bin()
-      local cmd = string.format("%s tts --text %q --out %q", abin, i.text, dst)
+      -- 2>&1 is load-bearing: without it the helper's stderr goes to the terminal and
+      -- `out` is empty, so a failed call reports "TTS failed: (no output)" while the
+      -- actual reason (a 400 naming the bad model) is nowhere in the error.
+      local cmd = string.format("%s tts --text %q --out %q 2>&1", abin, i.text, dst)
       if provider ~= "" then cmd = cmd .. string.format(" --provider %q", provider) end
       if voice and voice ~= "" then cmd = cmd .. string.format(" --voice %q", voice) end
       if model and model ~= "" then cmd = cmd .. string.format(" --model %q", model) end

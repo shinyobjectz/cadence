@@ -17,6 +17,7 @@ bin/eval --open                        # render the public eval suite to evals/o
 bin/vision-setup                       # one-time: vision/.venv (uv, py3.12, torch, mcp, Depth Anything 3)
 bin/cadence-vision call contact_sheet source=evals/cases/camera.lua n=6   # any vision tool from the shell
 bin/cadence-vision test                # vision smoke tests (depth/geometry run when DA3 weights are cached)
+bin/cadence-vision eval --clips DIR    # perception scored on real pixels with exact truth (docs/FACTS.md)
 CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timings
 ```
 
@@ -38,6 +39,12 @@ CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timin
   from the comp's own nodes, scene text, diffs, Depth Anything 3 depth and
   multi-view geometry with rendered views. Design and measurements:
   `docs/VISION.md`.
+- `vision/cadence_vision/facts.py` and friends — the fact log: one event-calculus
+  grammar (`holds`/`happens`/`src`) for both what a comp *is* (lifted, exact) and
+  what a clip *shows* (perceived, every line carrying its producer and a derived
+  confidence). `lower.py` writes edits back into the Lua. A fact with no `src`
+  line is exact — that rule is load-bearing, do not emit perceived facts without
+  one. Design, measurements and known gaps: `docs/FACTS.md`.
 - `model/` — `cadence-model`, the earlier editor-model harness. Direction
   scrapped 2026-09-16 (a timeline-only model cannot read pixels); kept for
   its validation code, not developed further.

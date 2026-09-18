@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image
 
 from . import CACHE
+from .profile import timed
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")   # torch + open3d each ship an OpenMP runtime on macOS
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -50,6 +51,7 @@ def device() -> str:
 
 
 @lru_cache(maxsize=2)
+@timed("da3.load")
 def load(name: str = "small"):
     from depth_anything_3.api import DepthAnything3
     repo = MODELS.get(name, name)
@@ -73,6 +75,7 @@ def to_relief(depth: np.ndarray) -> np.ndarray:
     return np.clip((inv - lo) / max(hi - lo, 1e-9), 0, 1)
 
 
+@timed("da3.mono")
 def mono(frame: np.ndarray, model: str = "small", process_res: int = 504) -> dict:
     import torch
     m = load(model)

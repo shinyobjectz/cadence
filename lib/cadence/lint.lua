@@ -38,6 +38,12 @@ local TH = {
 }
 
 local AUDIO_KINDS = { audio = true, tts = true, sfx = true, music = true }
+-- Kinds whose *content* moves without any property changing. The sampler reads node
+-- properties, so a video playing real footage is indistinguishable from a still image
+-- to it, and a comp that is nothing but a playing clip was reported "visible but static".
+local MOVING_CONTENT = { video = true, lottie = true, spritesheet = true, rive = true,
+  particles = true, world = true, html = true, page = true }
+
 local BOXED = { rect = true, html = true, page = true, image = true, svg = true, vector = true, lottie = true, video = true, spritesheet = true, displace = true, fx = true, surface = true, world = true }
 
 local function rel_lum(c)
@@ -74,8 +80,16 @@ function L.run(comp, opts)
   local dur = comp.duration
   local n_samples = math.floor(dur * fps) + 1
   local findings = {}
+  -- comp.lint_allow / node.lint_allow already silence a rule. What was missing is that
+  -- they silenced it *invisibly*: count what they take out and report it, so an allow is
+  -- a decision on the record rather than a way to make a rule disappear.
+  local suppressed = {}
+
   local function add(code, sev, node, t0, t1, measured, threshold, detail, suggestion)
-    if allowed(node, code, comp) then return end
+    if allowed(node, code, comp) then
+      suppressed[code] = (suppressed[code] or 0) + 1
+      return
+    end
     findings[#findings + 1] = { code = code, severity = sev,
       node = node and node.id or nil, t0 = t0, t1 = t1,
       measured = measured, threshold = threshold, detail = detail,
@@ -88,6 +102,13 @@ function L.run(comp, opts)
     if AUDIO_KINDS[n.kind] then audio[#audio + 1] = n
     elseif n.kind ~= "flex" and n.kind ~= "kinetic" and n.kind ~= "draw" then
       visual[#visual + 1] = n
+    end
+    -- anchor has one value; anything else is silently top-left, which reads as a layout bug
+    local an = n.initial.anchor
+    if an ~= nil and an ~= "center" and an ~= "topleft" then
+      add("unknown_anchor", "warn", n, 0, dur, nil, nil,
+        "anchor = \"" .. tostring(an) .. "\" is not an anchor; the node is placed top-left",
+        "use anchor = \"center\" or \"topleft\", or offset x/y yourself for right or bottom alignment")
     end
     -- GLSL escape hatches: the pass is opaque to lint, like s:draw
     if n.kind == "fx" then
@@ -335,6 +356,23 @@ function L.run(comp, opts)
 
   -- frozen spans: visible nodes but ~zero total motion
   local frozen_start = nil
+  -- A clip is playing / someone is talking: a held frame is then a choice, not a fault.
+  local function content_moves(s, t)
+    for _, n in ipairs(visual) do
+      if MOVING_CONTENT[n.kind] then
+        local st = states[s][n]
+        local i = n.initial
+        local from, len = i.from or 0, i.duration or (dur - (i.from or 0))
+        if st and st.vis and t >= from and t < from + len then return true end
+      end
+    end
+    for _, n in ipairs(audio) do
+      local i = n.initial
+      local at, len = i.at or 0, i.duration
+      if t >= at and (len == nil or t < at + len) then return true end
+    end
+    return false
+  end
   for s = 1, n_samples - 1 do
     local total, any_vis = 0, false
     for _, n in ipairs(visual) do
@@ -343,7 +381,14 @@ function L.run(comp, opts)
     end
     for _, d in pairs(amp[s] or {}) do total = total + d end
     local t = s / fps
-    if any_vis and total < 0.002 then
+    if any_vis and total < 0.002 and content_moves(s, t) then
+      -- not frozen: something on screen or in the mix is moving on its own
+      if frozen_start and t - frozen_start > TH.frozen_span then
+        add("frozen_span", "info", nil, frozen_start, t, t - frozen_start, TH.frozen_span,
+          "no tweens here, but a clip or narration is running")
+      end
+      frozen_start = nil
+    elseif any_vis and total < 0.002 then
       frozen_start = frozen_start or t
     else
       if frozen_start and t - frozen_start > TH.frozen_span then
@@ -498,7 +543,8 @@ function L.run(comp, opts)
       if st and st.vis and st.bx0 then
         if n.kind == "text" then
           local sz = (st.size or 32) * st.sc
-          if sz < TH.text_min and (not min_size_worst or sz < min_size_worst.v) then
+          local floor = TH.text_min * ((comp.height or 1080) / 1080)
+          if sz < floor and (not min_size_worst or sz < min_size_worst.v) then
             min_size_worst = { t = s / fps, v = sz }
           end
           local cx, cy = (st.bx0 + st.bx1) / 2, (st.by0 + st.by1) / 2
@@ -515,7 +561,8 @@ function L.run(comp, opts)
     end
     if min_size_worst then
       add("text_min_size", "warn", n, min_size_worst.t, min_size_worst.t,
-        min_size_worst.v, TH.text_min, "text below legibility floor")
+        min_size_worst.v, TH.text_min * ((comp.height or 1080) / 1080),
+        "text below legibility floor (scaled to comp height)")
     end
     if unsafe_worst then
       add("safe_area", "info", n, unsafe_worst, unsafe_worst, nil, nil,
@@ -675,6 +722,13 @@ function L.run(comp, opts)
     end
   end
 
+  -- one line per acknowledged rule, so a reader sees what was set aside and how much
+  for code, n in pairs(suppressed) do
+    findings[#findings + 1] = { code = "suppressed", severity = "info", node = nil,
+      t0 = 0, t1 = dur, measured = n, threshold = nil,
+      detail = n .. " x " .. code .. " allowed by this comp",
+      suggestion = "remove it from lint_allow to see them again" }
+  end
   table.sort(findings, function(a, b)
     local sev = { error = 1, warn = 2, info = 3 }
     if sev[a.severity] ~= sev[b.severity] then return sev[a.severity] < sev[b.severity] end

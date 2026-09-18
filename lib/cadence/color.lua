@@ -13,6 +13,11 @@ function C.parse(v)
   end
   if type(v) == "string" then
     local s = v:gsub("^#", "")
+    -- #rgb / #rgba, the form every other tool in the ecosystem takes. Each digit
+    -- doubles, so #0c1 is #00cc11 -- the same rule CSS uses.
+    if #s == 3 or #s == 4 then
+      s = s:gsub("(%x)", "%1%1")
+    end
     if #s == 6 then return { hexpair(s, 1), hexpair(s, 3), hexpair(s, 5), 1 } end
     if #s == 8 then return { hexpair(s, 1), hexpair(s, 3), hexpair(s, 5), hexpair(s, 7) } end
     error(("cadence: bad color %q"):format(v), 3)

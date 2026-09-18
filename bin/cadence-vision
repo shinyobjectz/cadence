@@ -4,6 +4,7 @@
 #   bin/cadence-vision call TOOL k=v   # run one tool from the shell, images land in vision/cache/
 #   bin/cadence-vision test            # smoke tests
 #   bin/cadence-vision eval [...]      # ask real models under each view condition (OPENROUTER_API_KEY)
+#   bin/cadence-vision eval --clips DIR  # score the perception stack on real footage with exact truth
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$ROOT/vision/.venv/bin/python"

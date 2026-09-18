@@ -261,7 +261,9 @@ def build_view(q: dict, cond: str) -> list[dict] | None:
 
 # ----------------------------------------------------------------------------- calling models
 
-def call(model: str, parts: list[dict], cache_key: str) -> dict:
+def call(model: str, parts: list[dict], cache_key: str, timeout: int = 180, retries: int = 3) -> dict:
+    """One model call, cached by `cache_key`. `timeout`/`retries` bound how long a caller can be
+    stuck: the eval harness can afford to wait, a producer inside a long pipeline cannot."""
     cp = CACHE / "eval" / f"{cache_key}.json"
     cp.parent.mkdir(exist_ok=True)
     if cp.exists():
@@ -276,9 +278,9 @@ def call(model: str, parts: list[dict], cache_key: str) -> dict:
                                           "HTTP-Referer": "https://github.com/shinyobjectz/cadence", "X-Title": "cadence-vision eval"})
     t0 = time.time()
     last = None
-    for attempt in range(3):
+    for attempt in range(max(1, retries)):
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 d = json.loads(r.read())
             break
         except Exception as e:  # noqa: BLE001
@@ -387,6 +389,9 @@ def report(qs, results, models) -> str:
 
 def main(argv: list[str]) -> int:
     import argparse
+    if "--clips" in argv:          # X5: real pixels, exact truth — see cadence_vision.clipeval
+        from . import clipeval
+        return clipeval.main(argv)
     ap = argparse.ArgumentParser(prog="cadence-vision eval")
     ap.add_argument("--models", default=",".join(MODELS))
     ap.add_argument("--conditions", default="")

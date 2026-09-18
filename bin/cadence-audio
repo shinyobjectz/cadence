@@ -28,6 +28,7 @@ def get_secret(name: str) -> str:
         "cartesia": ["CARTESIA_API_KEY"],
         "elevenlabs": ["ELEVENLABS_API_KEY", "XI_API_KEY"],
         "gateway": ["AI_GATEWAY_KEY", "CADENCE_AI_GATEWAY_KEY"],
+        "openrouter": ["OPENROUTER_API_KEY"],
     }
     for k in env_keys.get(name, [name]):
         val = os.getenv(k)
@@ -330,6 +331,67 @@ def tts_ollama(text: str, voice: str, model: str, out_path: Path):
         f.write(resp.content)
 
 
+def tts_openrouter(text: str, voice: str, model: str, out_path: Path):
+    """OpenRouter speech, via an audio-output chat model.
+
+    Two constraints come from the provider, not from us: audio output is refused unless
+    `stream: true`, and a stream only ever emits `pcm16`. So the deltas are base64 pcm
+    fragments that have to be concatenated and given a container here. OpenAI's speech
+    models emit 24 kHz mono signed 16-bit little-endian; ffmpeg picks the output format
+    from the extension."""
+    import requests
+    key = get_secret("openrouter")
+    if not key:
+        raise RuntimeError("cadence audio: OpenRouter API key not found (set OPENROUTER_API_KEY)")
+    # The resolve phase defaults `model` to an ElevenLabs id whatever the provider is,
+    # and an OpenRouter route always has a `vendor/name` shape -- so anything without a
+    # slash is meant for a different backend and is not ours to send.
+    if "/" not in (model or ""):
+        model = ""
+    payload = {
+        "model": model or "openai/gpt-audio-mini",
+        "stream": True,
+        "modalities": ["text", "audio"],
+        "audio": {"voice": voice or "alloy", "format": "pcm16"},
+        "messages": [
+            {"role": "system", "content":
+                "Read the user's text aloud verbatim, in a calm, measured documentary register. "
+                "Do not add, omit or rephrase any word. Do not reply conversationally."},
+            {"role": "user", "content": text},
+        ],
+    }
+    resp = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions", json=payload, stream=True, timeout=300,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    if resp.status_code != 200:
+        raise RuntimeError(f"cadence audio: OpenRouter failed ({resp.status_code}): {resp.text[:400]}")
+    chunks = []
+    for line in resp.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data: "):
+            continue
+        body = line[6:].strip()
+        if body == "[DONE]":
+            break
+        try:
+            d = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        if "error" in d:
+            raise RuntimeError(f"cadence audio: OpenRouter stream error: {json.dumps(d['error'])[:400]}")
+        audio = ((d.get("choices") or [{}])[0].get("delta") or {}).get("audio") or {}
+        if audio.get("data"):
+            chunks.append(base64.b64decode(audio["data"]))
+    if not chunks:
+        raise RuntimeError("cadence audio: OpenRouter returned no audio for %r" % text[:60])
+    ensure_parent(out_path)
+    proc = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-y", "-f", "s16le", "-ar", "24000", "-ac", "1",
+         "-i", "pipe:0", str(out_path)], input=b"".join(chunks), capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError("cadence audio: ffmpeg could not wrap OpenRouter pcm: "
+                           + proc.stderr.decode()[:300])
+
+
 def tts_elevenlabs(text: str, voice: str, model: str, out_path: Path, align_path: Path = None):
     import requests
     key = get_secret("elevenlabs")
@@ -447,6 +509,7 @@ def resolve_provider(node_provider: str = None) -> str:
         if p == "cartesia": return "cartesia"
         if p == "elevenlabs": return "elevenlabs"
         if p in ("ollama", "openai"): return "ollama"
+        if p in ("openrouter", "or"): return "openrouter"
         if p in ("onnx", "local", "kokoro", "pocket-tts", "qwen-tts"): return "onnx"
         return p
 
@@ -460,6 +523,10 @@ def resolve_provider(node_provider: str = None) -> str:
         return "cartesia"
     if get_secret("elevenlabs"):
         return "elevenlabs"
+    # Ahead of onnx only because the local fallback degrades to `say`/sine when no
+    # weights are cached; an explicit --provider still wins over all of this.
+    if get_secret("openrouter"):
+        return "openrouter"
 
     return "onnx"
 
@@ -493,6 +560,15 @@ def cmd_tts(args):
                 json.dump(res, f)
     elif provider == "ollama":
         tts_ollama(args.text, args.voice, args.model, out_path)
+        if align_path:
+            dur_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)]
+            dur = float(subprocess.run(dur_cmd, capture_output=True, text=True).stdout.strip() or 1.0)
+            res = words_from_text(args.text, dur)
+            ensure_parent(align_path)
+            with open(align_path, "w") as f:
+                json.dump(res, f)
+    elif provider == "openrouter":
+        tts_openrouter(args.text, args.voice, args.model, out_path)
         if align_path:
             dur_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)]
             dur = float(subprocess.run(dur_cmd, capture_output=True, text=True).stdout.strip() or 1.0)
@@ -639,7 +715,7 @@ def main():
     tts_p = subparsers.add_parser("tts", help="Generate text-to-speech audio")
     tts_p.add_argument("--text", required=True, help="Text to speak")
     tts_p.add_argument("--out", required=True, help="Output audio file path (.mp3/.wav)")
-    tts_p.add_argument("--provider", default="", help="Audio provider: onnx, fish, cartesia, ollama, elevenlabs")
+    tts_p.add_argument("--provider", default="", help="Audio provider: onnx, fish, cartesia, ollama, openrouter, elevenlabs")
     tts_p.add_argument("--voice", default="", help="Voice ID or name")
     tts_p.add_argument("--model", default="", help="Model name or identifier")
     tts_p.add_argument("--speed", type=float, default=1.0, help="Speech speed multiplier")

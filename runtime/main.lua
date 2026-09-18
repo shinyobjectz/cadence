@@ -115,7 +115,17 @@ local function load_comp(path, fps_override, host_opts)
   io.open, io.popen, io.read = banned("io.open"), banned("io.popen"), banned("io.read")
 
   local chunk, err = loadfile(path)
-  if not chunk then error("ellua: cannot load comp: " .. tostring(err)) end
+  if not chunk then
+    local e = tostring(err)
+    -- Lua allows 200 locals per function and a scene with a few hundred nodes reaches it.
+    -- The raw message names an implementation limit, not the thing the author did.
+    if e:match("more than 200 local variables") then
+      e = e .. "\n  ellua: a scene function may hold at most 200 locals. Put the nodes in one"
+            .. " table instead -- `local N = {}` then `N.title = s:text{...}` -- which costs"
+            .. " nothing and has no limit."
+    end
+    error("ellua: cannot load comp: " .. e)
+  end
   local comp = chunk()
   assert(type(comp) == "table" and comp.compile, "ellua: comp file must `return e.comp{...}`")
   -- media resolves BEFORE scripts record, so tts/audio durations drive timing;
@@ -330,15 +340,29 @@ local function offline(comp, opts)
     end
     for _, l in ipairs(plain_labels) do final[#final + 1] = l end
 
+    -- asetpts after amix is load-bearing: amix hands on the timestamps of its
+    -- delayed inputs, and the encoder then writes a file a few ms long. Any clip
+    -- with a non-zero `at` (i.e. adelay > 0) is lost without this. Regenerating
+    -- the pts from the sample count is what makes a delayed mix survive. The
+    -- voice bus above needs no such fix: apad follows it and it feeds this amix.
     local filter = table.concat(chains, ";") .. ";" ..
       table.concat(final) ..
-      string.format("amix=inputs=%d:duration=longest:normalize=0," ..
+      string.format("amix=inputs=%d:duration=longest:normalize=0,asetpts=N/SR/TB," ..
         "atrim=duration=%f,apad=whole_dur=%f[mix]", #final, comp.duration, comp.duration)
     local mixfile = outfile .. ".mix.tmp.m4a"
     local ok, o = shell(string.format(
       "ffmpeg -hide_banner -loglevel error -y %s -filter_complex \"%s\" -map '[mix]'" ..
       " -c:a aac -b:a 192k '%s'", table.concat(inputs, " "), filter, mixfile))
     if not ok then error("ellua: audio mix failed:\n" .. o) end
+    -- apad pads to comp.duration, so a short mix means the chain dropped audio
+    -- on the floor. Fail loudly rather than mux a silent track.
+    local _, dur = shell(string.format(
+      "ffprobe -v error -show_entries format=duration -of csv=p=0 '%s'", mixfile))
+    local got = tonumber((dur or ""):match("[%d.]+") or "")
+    if not got or got < comp.duration * 0.9 then
+      error(string.format("ellua: audio mix produced %ss of a %.3fs comp -- the filter chain dropped audio:\n%s",
+        tostring(got), comp.duration, filter))
+    end
     ok, o = shell(string.format(
       "ffmpeg -hide_banner -loglevel error -y -i '%s' -i '%s' -map 0:v -map 1:a" ..
       " -c copy -movflags +faststart '%s'", video_target, mixfile, outfile))
