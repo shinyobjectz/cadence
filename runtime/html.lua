@@ -27,6 +27,22 @@ function H.render(html, w, h, scale, out_ptr, out_len)
   end
 end
 
+-- An html node's fragment. With `base` (a directory or URL) it gets a resource provider,
+-- so @font-face, <img> and stylesheets resolve against it (local files stay deterministic);
+-- without one it is the provider-free fragment path.
+function H.render_node(i, markup, out_ptr, out_len)
+  if i.base then
+    -- A bare directory goes as a file URL ending in "/" (builds before the Rust fix drop it).
+    local base = i.base
+    if not base:match("^%a[%w+.-]*:") and base:sub(1, 1) == "/" then
+      base = "file://" .. base .. (base:sub(-1) == "/" and "" or "/")
+    end
+    H.render_page(markup, base, i.w, i.h, 1.0, out_ptr, out_len, false)
+  else
+    H.render(markup, i.w, i.h, 1.0, out_ptr, out_len)
+  end
+end
+
 function H.render_page(html, base_url, w, h, scale, out_ptr, out_len, bake)
   local b = (bake ~= false) and 1 or 0
   if lib.el_html_render_page(html, base_url or "", w, h, scale or 1.0, b,

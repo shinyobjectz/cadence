@@ -200,6 +200,11 @@ local function offline(comp, opts)
     else
       venc = "-c:v libx264 -preset veryfast -threads 0 -crf 18"
     end
+    -- CADENCE_BITRATE (e.g. 12M) caps the x264 tiers: grain or noise at crf 17-18 runs to GBs.
+    local br = os.getenv("CADENCE_BITRATE")
+    if br and br:match("^%d+[kKmM]?$") and q ~= "draft" then
+      venc = venc:gsub("%-crf %d+", string.format("-b:v %s -maxrate %s -bufsize %s", br, br, br))
+    end
     local cmd = string.format(
       "ffmpeg -hide_banner -loglevel error -y -f rawvideo -pixel_format rgba" ..
       " -video_size %dx%d -framerate %d -i - %s" ..

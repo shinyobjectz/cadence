@@ -516,7 +516,7 @@ local function scene_html(node, opacity, chain)
   if changed then
     local markup = i.html:gsub("{{progress_int}}", tostring(math.floor(progress + 0.5)))
       :gsub("{{progress}}", progress_key)
-    html.render(markup, i.w, i.h, 1.0, node.htmldata:getFFIPointer(), node.htmldata:getSize())
+    html.render_node(i, markup, node.htmldata:getFFIPointer(), node.htmldata:getSize())
     node.html_key = progress_key
   end
   local id = scene.image_slot(node, node.htmldata, changed, true) -- blitz output is premultiplied
@@ -1097,8 +1097,7 @@ paint_node = function(comp, node, t, stop)
           if node.html_key ~= key then
             local markup = i.html:gsub("{{progress_int}}", tostring(math.floor(progress + 0.5)))
               :gsub("{{progress}}", progress_key)
-            html.render(markup, i.w, i.h, 1.0,
-              node.htmldata:getFFIPointer(), node.htmldata:getSize())
+            html.render_node(i, markup, node.htmldata:getFFIPointer(), node.htmldata:getSize())
             require("effects").apply(node, node.htmldata, i.w, i.h)
             node.htmlimg:replacePixels(node.htmldata)
             node.html_key = key

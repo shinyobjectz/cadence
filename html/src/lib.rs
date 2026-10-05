@@ -117,8 +117,9 @@ fn normalize_base(base: &str) -> Option<String> {
     } else {
         std::env::current_dir().ok()?.join(path)
     };
-    Url::from_file_path(&abs)
-        .ok()
+    // A trailing slash names a directory: keep it, or relative URLs resolve one level up.
+    let url = if base.ends_with('/') { Url::from_directory_path(&abs) } else { Url::from_file_path(&abs) };
+    url.ok()
         .map(|u| u.to_string())
         .or_else(|| Some(format!("file://{}", abs.display())))
 }

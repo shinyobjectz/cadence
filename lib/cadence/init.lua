@@ -264,7 +264,9 @@ function Scene:music(p)
 end
 -- HTML/CSS layer (Blitz: Stylo + Taffy + vello_cpu — no Chrome). Static content
 -- renders once and is cached; tweening `progress` substitutes {{progress}} in the
--- markup and re-renders per change. Transforms animate like any node.
+-- markup and re-renders per change. Transforms animate like any node. `base` (a
+-- directory or URL) lets the fragment load @font-face fonts, images and stylesheets
+-- relative to it; without it nothing external loads.
 function Scene:html(p)
   assert(type(p.html) == "string" or type(p.src) == "string",
     "cadence: html{html=...} or html{src=...} required")
