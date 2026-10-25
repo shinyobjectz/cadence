@@ -419,15 +419,25 @@ function R.media(nodes, fps)
     elseif n.kind == "video" then
       local i = n.initial
       local file = localize(i.src)
-      local key = sha1(table.concat({ i.src, i.media_start, i.duration, fps, i.w, i.h }, "|"))
+      -- A window is taken out of the source before the cover fit, and it is part
+      -- of the cache key: two comps that differ only in where they look must not
+      -- share extracted frames.
+      local c = i.crop
+      local window = ""
+      local ckey = ""
+      if type(c) == "table" and (c.w or 0) > 0 and (c.h or 0) > 0 then
+        window = string.format("crop=%d:%d:%d:%d,", c.w, c.h, c.x or 0, c.y or 0)
+        ckey = window
+      end
+      local key = sha1(table.concat({ i.src, i.media_start, i.duration, fps, i.w, i.h, ckey }, "|"))
       local dir = cache_root() .. "/frames/" .. key
       if not exists(dir .. "/DONE") then
         assert(sh(("mkdir -p '%s'"):format(dir)))
         local cmd = string.format(
           "ffmpeg -hide_banner -loglevel error -y -i '%s' -ss %f -t %f" ..
-          " -vf 'fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d'" ..
+          " -vf 'fps=%d,%sscale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d'" ..
           " -q:v 2 '%s/%%05d.jpg'",
-          file, i.media_start, i.duration, fps, i.w, i.h, i.w, i.h, dir)
+          file, i.media_start, i.duration, fps, window, i.w, i.h, i.w, i.h, dir)
         local ok, out = sh(cmd)
         if not ok then error("ellua resolve: frame extraction failed:\n" .. out) end
         assert(sh(("touch '%s/DONE'"):format(dir)))

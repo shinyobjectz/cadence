@@ -217,16 +217,30 @@ function stretchDraw(ctx, src, x, y, w, h, rx, opacity) {
   ctx.restore();
 }
 
-function coverDraw(ctx, src, x, y, w, h, rx, opacity) {
+function coverDraw(ctx, src, x, y, w, h, rx, opacity, crop) {
   if (!src) return;
   const sw = src.videoWidth || src.naturalWidth || src.width;
   const sh = src.videoHeight || src.naturalHeight || src.height;
   if (!sw || !sh) return;
-  const scale = Math.max(w / sw, h / sh);
+  // A crop is the caller saying which part of the source to show. Without one
+  // the centre of the source is taken, which is only ever a guess about where
+  // the subject is; with one, the window is the decision and is obeyed.
+  // The window is cover-fitted into the box, never stretched into it: a crop
+  // that is not the box's aspect loses its edges rather than distorting what
+  // is inside it. With no crop the window is the whole source, which is the
+  // centre rule unchanged.
+  let wx = 0, wy = 0, ww = sw, wh = sh;
+  if (crop && crop.w > 0 && crop.h > 0) {
+    ww = Math.min(crop.w, sw);
+    wh = Math.min(crop.h, sh);
+    wx = Math.max(0, Math.min(crop.x, sw - ww));
+    wy = Math.max(0, Math.min(crop.y, sh - wh));
+  }
+  const scale = Math.max(w / ww, h / wh);
   const cw = w / scale;
   const ch = h / scale;
-  const sx = (sw - cw) / 2;
-  const sy = (sh - ch) / 2;
+  const sx = wx + (ww - cw) / 2;
+  const sy = wy + (wh - ch) / 2;
   ctx.save();
   ctx.globalAlpha = opacity;
   withRoundClip(ctx, x, y, w, h, rx, () => {
@@ -388,7 +402,7 @@ export function paint(ctx, frame, t, media) {
       const el = media?.video(node, t);
       if (node.opacity > 0.001) {
         const [x, y] = origin(node, node.w, node.h);
-        coverDraw(ctx, el, x, y, node.w, node.h, node.rx, node.opacity);
+        coverDraw(ctx, el, x, y, node.w, node.h, node.rx, node.opacity, node.crop);
       }
     } else if (node.kind === "spritesheet") {
       const sheet = media?.sheet(node.src);

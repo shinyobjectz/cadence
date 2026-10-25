@@ -1,6 +1,11 @@
 # The fact log — one grammar for what a comp is and what a clip shows
 
-Status: built 2026-09-17, `vision/cadence_vision/{facts,lower,perceive,…}.py`. This is the layer
+Status: built 2026-09-17, `vision/cadence_vision/{facts,lower,perceive,…}.py`. The port out of
+Python began 2026-09-19: `facts/` is the grammar and the query in Rust (`cadence-facts`, cdylib +
+rlib, C ABI `cf_query`/`cf_at`/`cf_free`), tested against the same two logs as the Python suite.
+Pure logic first, because it needs no model; the producers follow in the order their models are
+already ONNX, leaving the numpy/cv2 glue — optical flow, laplacian focus, Foote novelty — as the
+real work. The grammar is the contract, so a consumer never learns which side produced its log. This is the layer
 between Cadence and an editing model. It grew out of the vision MCP (`docs/VISION.md`), which
 answers *how do we show a model a frame*; this answers the question after it — **what does the model
 read, and how does what it says come back as Lua.**

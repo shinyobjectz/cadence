@@ -1,0 +1,11 @@
+[package]
+name = "cadence-facts"
+version = "0.1.0"
+edition = "2021"
+description = "The Cadence fact log: the grammar, and querying it by pattern. No models, no Python."
+
+[lib]
+name = "cadence_facts"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]

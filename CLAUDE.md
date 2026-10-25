@@ -39,6 +39,9 @@ CADENCE_PROFILE=1 …                    # per-frame draw/read/out + scene timin
   from the comp's own nodes, scene text, diffs, Depth Anything 3 depth and
   multi-view geometry with rendered views. Design and measurements:
   `docs/VISION.md`.
+- `facts/` — `cadence-facts`: the fact grammar and the pattern query in Rust,
+  loaded over a C ABI like the other native helpers. The first tranche of the
+  port out of `vision/`; same grammar, same tests, no models involved.
 - `vision/cadence_vision/facts.py` and friends — the fact log: one event-calculus
   grammar (`holds`/`happens`/`src`) for both what a comp *is* (lifted, exact) and
   what a clip *shows* (perceived, every line carrying its producer and a derived

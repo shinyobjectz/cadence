@@ -204,7 +204,9 @@ end
 function Scene:circle(p) return add(self, "circle", p) end
 function Scene:text(p) return add(self, "text", p) end
 -- Video layer (v0: resolve phase extracts frames at comp fps, cover-cropped to w×h).
--- Structural (not animatable): src, from (comp-time start), duration, media_start.
+-- Structural (not animatable): src, from (comp-time start), duration, media_start,
+-- crop. crop = {x=,y=,w=,h=} names the rect of the source to show instead of its
+-- centre, which is what lets a wide source become a tall frame on purpose.
 function Scene:video(p)
   assert(type(p.src) == "string", "cadence: video{src=...} required")
   return add(self, "video", p)

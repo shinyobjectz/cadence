@@ -445,6 +445,23 @@ scene_vector = function(node, opacity, chain, t)
   -- node opacity < 1 is applied by scene_node as an opacity layer around this call
 end
 
+-- The source region a video node shows, cover-fitted into its box. `crop` names
+-- the window the comp decided on; with none, the window is the whole frame,
+-- which is the centre rule that has always applied. Returns the source rect and
+-- the scale that maps it onto the box.
+local function cover_window(crop, sw, sh, w, h)
+  local wx, wy, ww, wh = 0, 0, sw, sh
+  if type(crop) == "table" and (crop.w or 0) > 0 and (crop.h or 0) > 0 then
+    ww = math.min(crop.w, sw)
+    wh = math.min(crop.h, sh)
+    wx = math.max(0, math.min(crop.x or 0, sw - ww))
+    wy = math.max(0, math.min(crop.y or 0, sh - wh))
+  end
+  local sc = math.max(w / ww, h / wh)
+  local vw, vh = w / sc, h / sc
+  return wx + (ww - vw) / 2, wy + (wh - vh) / 2, vw, vh, sc
+end
+
 local function comp_render_fps(node) return P.render_fps or 30 end
 local function scene_video(node, opacity, chain, t)
   local i = node.initial
@@ -470,10 +487,9 @@ local function scene_video(node, opacity, chain, t)
         node.vdata:getFFIPointer(), node.vdata:getSize())
       decode.yuv_to_rgba(node.ydata:getFFIPointer(), node.udata:getFFIPointer(), node.vdata:getFFIPointer(),
         d.w, d.h, d.full_range, node.vfull:getFFIPointer(), node.vfull:getSize())
-      -- cover-crop the decoded frame into the node box (same rule as the GPU quad)
-      local sc = math.max(w / d.w, h / d.h)
-      local cw, ch = w / sc, h / sc
-      local sx, sy = math.floor((d.w - cw) / 2), math.floor((d.h - ch) / 2)
+      -- window the decoded frame into the node box (same rule as the GPU quad)
+      local sx, sy, _, _, sc = cover_window(i.crop, d.w, d.h, w, h)
+      sx, sy = math.floor(sx), math.floor(sy)
       id = scene.image_slot(node, node.vfull, true, true)
       scene_builder:transform(node_affine(chain, node))
       scene_builder:clip_push(ox, oy, w, h, node:get("rx") or 0)
@@ -926,10 +942,9 @@ paint_node = function(comp, node, t, stop)
               node.yimg:setFilter("linear", "linear")
               node.uimg:setFilter("linear", "linear")
               node.vimg:setFilter("linear", "linear")
-              -- cover-crop region in source space; GPU scales it to node w×h
-              local sc = math.max(i.w / d.w, i.h / d.h)
-              local cw, ch = i.w / sc, i.h / sc
-              node.quad = love.graphics.newQuad((d.w - cw) / 2, (d.h - ch) / 2, cw, ch, d.w, d.h)
+              -- window in source space; GPU scales it to node w×h
+              local sx, sy, cw, ch = cover_window(i.crop, d.w, d.h, i.w, i.h)
+              node.quad = love.graphics.newQuad(sx, sy, cw, ch, d.w, d.h)
               node.qscale = { i.w / cw, i.h / ch }
             end
             local decode = require("decode")

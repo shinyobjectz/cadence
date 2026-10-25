@@ -123,6 +123,9 @@ local function fill_media(item, node)
   item.speed = i.speed or 1
   item.cols = i.cols
   item.rows = i.rows
+  -- Structural: the rect of the source to show. Without it the painter falls
+  -- back to the centre, which is the wrong half of a wide clip in a tall frame.
+  item.crop = i.crop
 end
 
 local function layout_kinetic(nodes, measure)
